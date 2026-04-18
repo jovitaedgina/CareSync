@@ -7,8 +7,8 @@ services:
     restart: always
     environment:
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: password  # Sesuai dengan config.php tadi
-      POSTGRES_DB: caresync_db     # Otomatis membuat database ini saat pertama kali jalan
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: caresync_db
     ports:
       - "5432:5432"
     volumes:
