@@ -1,0 +1,18 @@
+version: '3.8'
+
+services:
+  db:
+    image: postgres:15-alpine
+    container_name: caresync_postgres
+    restart: always
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password  # Sesuai dengan config.php tadi
+      POSTGRES_DB: caresync_db     # Otomatis membuat database ini saat pertama kali jalan
+    ports:
+      - "5432:5432"
+    volumes:
+      - caresync_db_data:/var/lib/postgresql/data
+
+volumes:
+  caresync_db_data:
