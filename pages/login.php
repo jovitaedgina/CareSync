@@ -1,6 +1,7 @@
 <?php
 require_once __DIR__ . '/../includes/config.php';
 redirectIfLoggedIn();
+
 $pageTitle = 'Masuk — CareSync';
 ?>
 <!DOCTYPE html>
@@ -313,17 +314,14 @@ async function handleLogin(e) {
         password: document.getElementById('login-password').value
       })
     });
+    
+    // Jika sukses, simpan session
     saveSession(data.data.token, data.data.user);
     showToast('Berhasil masuk!', 'success');
     setTimeout(() => window.location.href = '/caresync/pages/dashboard.php', 800);
   } catch (err) {
-    // Demo mode: login langsung (MOCK object harus dipastikan ada pada app.js)
-    // Jika tidak ada error throw, bisa pakai data statis sementara
-    if(typeof saveSession === "function" && typeof MOCK !== "undefined") {
-        saveSession('demo-token-123', MOCK.user);
-        showToast('Mode demo — masuk sebagai ' + MOCK.user.name, 'info');
-    }
-    setTimeout(() => window.location.href = '/caresync/pages/dashboard.php', 800);
+    // Tampilkan error dari backend (misal: "Email atau password salah!")
+    showToast(err.message, 'error');
   } finally {
     setLoading(btn, false);
   }
@@ -332,18 +330,29 @@ async function handleLogin(e) {
 async function sendLoginOtp() {
   const email = document.getElementById('otp-email').value;
   if (!email) { showToast('Masukkan email dulu', 'error'); return; }
+  
   const btn = document.getElementById('btn-send-otp');
   setLoading(btn, true, 'Mengirim...');
-  try {
-    await api('/auth/send-otp', { method: 'POST', body: JSON.stringify({ email }) });
-  } catch (_) {}
   
-  document.getElementById('otp-step-1').classList.add('hidden');
-  document.getElementById('otp-step-2').classList.remove('hidden');
-  document.getElementById('otp-target-email').textContent = email;
-  startCountdown(300);
-  initOtpBoxes();
-  setLoading(btn, false);
+  try {
+    // Panggil API untuk cek email
+    const response = await api('/auth/send-otp', { method: 'POST', body: JSON.stringify({ email }) });
+    
+    // Kalau email ADA, sembunyikan step 1, tampilkan step 2
+    document.getElementById('otp-step-1').classList.add('hidden');
+    document.getElementById('otp-step-2').classList.remove('hidden');
+    document.getElementById('otp-target-email').textContent = email;
+    startCountdown(300);
+    initOtpBoxes();
+    
+    // Tampilkan notifikasi bocoran OTP
+    showToast(response.message, 'success');
+  } catch (err) {
+    // Kalau email TIDAK ADA, tampilkan error dan JANGAN pindah step
+    showToast(err.message, 'error');
+  } finally {
+    setLoading(btn, false);
+  }
 }
 
 function startCountdown(secs) {
@@ -383,14 +392,17 @@ async function verifyLoginOtp() {
       body: JSON.stringify({ email: document.getElementById('otp-email').value, otp: code })
     });
     saveSession(data.data.token, data.data.user);
-  } catch (_) {
-    if(typeof saveSession === "function" && typeof MOCK !== "undefined") {
-        saveSession('demo-token-123', MOCK.user);
-    }
+    
+    showToast('Berhasil masuk!', 'success');
+    setTimeout(() => window.location.href = '/caresync/pages/dashboard.php', 800);
+  } catch (err) {
+    // Matikan mock bypass, tampilkan error aslinya!
+    showToast(err.message, 'error');
+  } finally {
+    setLoading(btn, false);
   }
-  showToast('Berhasil masuk!', 'success');
-  setTimeout(() => window.location.href = '/caresync/pages/dashboard.php', 800);
 }
+
 </script>
 </body>
 </html>

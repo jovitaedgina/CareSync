@@ -1,5 +1,16 @@
 <?php
+session_start();
+
 require_once __DIR__ . '/../includes/config.php';
+if (!isset($_SESSION['user_id'])) {
+    header('Location: ' . BASE_URL . '/pages/login.php');
+    exit;
+}
+
+header("Cache-Control: no-store, no-cache, must-revalidate, max-age=0");
+header("Cache-Control: post-check=0, pre-check=0", false);
+header("Pragma: no-cache");
+
 $pageTitle   = 'Beranda — CareSync';
 $currentPage = 'dashboard';
 
@@ -360,6 +371,14 @@ include __DIR__ . '/../includes/header.php';
 </div>
 
 <script>
+
+const token = localStorage.getItem('em_token');
+    
+    if (!token) {
+        // Jika em_token tidak ada, langsung tendang ke login
+        window.location.replace('<?= BASE_URL ?>/pages/login.php');
+    }
+
 /* Toast */
 function showToast(msg,type='info',dur=3500){
     const icons={info:'fa-circle-info',success:'fa-circle-check',error:'fa-circle-xmark',warning:'fa-triangle-exclamation'};

@@ -3,6 +3,7 @@ require_once __DIR__ . '/../includes/config.php';
 redirectIfLoggedIn();
 $pageTitle = 'Daftar — CareSync';
 ?>
+
 <!DOCTYPE html>
 <html lang="id">
 <head>
@@ -65,7 +66,6 @@ $pageTitle = 'Daftar — CareSync';
 </head>
 <body>
 <div class="auth-wrap">
-  <!-- Kiri -->
   <div class="auth-left">
     <div style="position:relative;z-index:1">
       <a href="<?= BASE_URL ?>" style="display:flex;align-items:center;gap:8px;margin-bottom:48px;text-decoration:none">
@@ -77,7 +77,6 @@ $pageTitle = 'Daftar — CareSync';
         Bergabung dengan<br>jutaan pengguna
       </h2>
 
-      <!-- Stats -->
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:40px">
         <?php foreach ([['50K+','Pasien aktif'],['200+','Dokter terverifikasi'],['99%','Kepuasan pasien'],['24/7','Layanan tersedia']] as [$num,$label]): ?>
         <div style="background:rgba(255,255,255,.12);border-radius:12px;padding:16px">
@@ -89,7 +88,6 @@ $pageTitle = 'Daftar — CareSync';
     </div>
   </div>
 
-  <!-- Kanan -->
   <div class="auth-right">
     <div class="auth-card">
       <div style="margin-bottom:24px">
@@ -97,7 +95,6 @@ $pageTitle = 'Daftar — CareSync';
         <p class="text-muted text-sm">Daftar gratis, mulai konsultasi hari ini</p>
       </div>
 
-      <!-- Step indicator -->
       <div class="steps">
         <div class="step-item">
           <div class="step-circle active" id="sc-1">1</div>
@@ -112,7 +109,6 @@ $pageTitle = 'Daftar — CareSync';
         </div>
       </div>
 
-      <!-- Step 1: Data diri -->
       <div class="step-panel active" id="step-1">
         <h4 style="margin-bottom:18px">Data diri</h4>
         <div class="form-group">
@@ -143,7 +139,6 @@ $pageTitle = 'Daftar — CareSync';
         </p>
       </div>
 
-      <!-- Step 2: Email & Password -->
       <div class="step-panel" id="step-2">
         <h4 style="margin-bottom:18px">Email & password</h4>
         <div class="form-group">
@@ -179,7 +174,6 @@ $pageTitle = 'Daftar — CareSync';
         </div>
       </div>
 
-      <!-- Step 3: Verifikasi OTP -->
       <div class="step-panel" id="step-3">
         <div style="text-align:center;margin-bottom:28px">
           <div style="width:64px;height:64px;background:var(--primary-light);border-radius:50%;display:flex;align-items:center;justify-content:center;margin:0 auto 16px">
@@ -210,7 +204,9 @@ $pageTitle = 'Daftar — CareSync';
 <div id="toast-container" class="toast-container"></div>
 
 <script>
+const BASE_URL = '<?= BASE_URL ?>';
 let currentStep = 1;
+let regInterval = null;
 
 function goStep(n) {
   document.getElementById('step-' + currentStep).classList.remove('active');
@@ -250,38 +246,50 @@ function checkStrength(val) {
 }
 
 async function submitRegister() {
+  const nama = document.getElementById('reg-name').value;
+  const email = document.getElementById('reg-email').value;
   const password = document.getElementById('reg-password').value;
   const confirm  = document.getElementById('reg-confirm').value;
+
+  if (!email || !password) { showToast('Email dan password wajib diisi', 'error'); return; }
   if (password !== confirm) { showToast('Password tidak cocok', 'error'); return; }
   if (password.length < 8)  { showToast('Password minimal 8 karakter', 'error'); return; }
 
   const btn = document.getElementById('btn-register');
-  setLoading(btn, true, 'Mendaftar...');
-  const payload = {
-    name:     document.getElementById('reg-name').value,
-    gender:   document.getElementById('reg-gender').value,
-    dob:      document.getElementById('reg-dob').value,
-    phone:    document.getElementById('reg-phone').value,
-    email:    document.getElementById('reg-email').value,
-    password,
-  };
+  setLoading(btn, true, 'Mengirim OTP...');
+  
   try {
-    await api('/auth/register', { method: 'POST', body: JSON.stringify(payload) });
-  } catch (_) { /* demo mode */ }
-
-  setLoading(btn, false);
-  document.getElementById('confirm-email').textContent = payload.email;
-  goStep(3);
-  startRegCountdown(300);
-  initRegOtpBoxes();
+    // 1. Panggil API kirim OTP (Mengecek email & mengirim email PHPMailer)
+    const response = await api('/auth/send-register-otp', { 
+      method: 'POST', 
+      body: JSON.stringify({ nama, email }) 
+    });
+    
+    // 2. Kalau sukses, baru lanjut ke form OTP (Step 3)
+    setLoading(btn, false);
+    document.getElementById('confirm-email').textContent = email;
+    startRegCountdown(300);
+    goStep(3);
+    initRegOtpBoxes();
+    showToast(response.message, 'success');
+  } catch (err) {
+    // Kalau gagal (misal email sudah ada), tampilkan error dari backend
+    setLoading(btn, false);
+    showToast(err.message, 'error'); 
+  }
 }
 
 function startRegCountdown(secs) {
   const el = document.getElementById('reg-countdown');
-  const iv = setInterval(() => {
+  if (regInterval) clearInterval(regInterval);
+  regInterval = setInterval(() => {
     secs--;
+    if (secs <= 0) {
+      clearInterval(regInterval);
+      el.textContent = 'Kedaluwarsa';
+      return;
+    }
     el.textContent = String(Math.floor(secs/60)).padStart(2,'0') + ':' + String(secs%60).padStart(2,'0');
-    if (secs <= 0) { clearInterval(iv); el.textContent = 'Kedaluwarsa'; }
   }, 1000);
 }
 
@@ -304,22 +312,49 @@ async function verifyRegOtp() {
   const code = [...document.querySelectorAll('#reg-otp-boxes .otp-input')].map(b=>b.value).join('');
   const btn  = document.getElementById('btn-verify-reg');
   setLoading(btn, true, 'Memverifikasi...');
+
+  // Gabungkan semua data diri + password + OTP untuk dikirim ke backend
+  const payload = {
+    nama: document.getElementById('reg-name').value,
+    email: document.getElementById('reg-email').value,
+    password: document.getElementById('reg-password').value,
+    gender: document.getElementById('reg-gender').value,
+    dob: document.getElementById('reg-dob').value,
+    phone: document.getElementById('reg-phone').value,
+    otp: code
+  };
+  
   try {
-    const data = await api('/auth/verify-otp', {
+    // 3. Panggil API Registrasi (Memvalidasi OTP dan memasukkan ke DB)
+    const response = await api('/auth/register', {
       method: 'POST',
-      body: JSON.stringify({ email: document.getElementById('reg-email').value, otp: code })
+      body: JSON.stringify(payload)
     });
-    saveSession(data.data.token, data.data.user);
-  } catch (_) {
-    saveSession('demo-token-123', { ...MOCK.user, name: document.getElementById('reg-name').value });
+    
+    // 4. Simpan session token asli & redirect ke dashboard
+    saveSession(response.data.token, response.data.user);
+    showToast('Pendaftaran berhasil!', 'success');
+    setTimeout(() => window.location.href = BASE_URL + '/pages/dashboard.php', 900);
+  } catch (err) {
+    // Kalau OTP salah
+    setLoading(btn, false);
+    showToast(err.message, 'error');
   }
-  showToast('Akun berhasil dibuat!', 'success');
-  setTimeout(() => window.location.href = '/caresync/pages/dashboard.php', 900);
 }
 
-function resendOtp() {
-  showToast('OTP baru dikirim ke email-mu', 'info');
-  startRegCountdown(300);
+async function resendOtp() {
+  const email = document.getElementById('reg-email').value;
+  const nama = document.getElementById('reg-name').value;
+  try {
+    const response = await api('/auth/send-register-otp', {
+      method: 'POST',
+      body: JSON.stringify({ nama, email })
+    });
+    showToast(response.message, 'success');
+    startRegCountdown(300);
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
 }
 </script>
 </body>

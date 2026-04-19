@@ -1,4 +1,5 @@
-const API_BASE = 'http://localhost/caresync/api';
+// Ambil base URL secara dinamis dari origin jika memungkinkan, atau gunakan path relatif
+const API_BASE = window.location.origin + '/caresync/api';
 
 // ── API helper ──────────────────────────────────────────────
 async function api(endpoint, options = {}) {
@@ -24,13 +25,13 @@ function saveSession(token, user) {
 function clearSession() {
   localStorage.removeItem('em_token');
   localStorage.removeItem('em_user');
-  window.location.href = '/caresync/pages/login.php';
+  window.location.href = '../pages/login.php';
 }
 function getUser() {
   try { return JSON.parse(localStorage.getItem('em_user') || '{}'); } catch { return {}; }
 }
 function isLoggedIn() { return !!localStorage.getItem('em_token'); }
-function requireAuth() { if (!isLoggedIn()) window.location.href = '/caresync/pages/login.php'; }
+function requireAuth() { if (!isLoggedIn()) window.location.href = '../pages/login.php'; }
 
 // ── Toast ────────────────────────────────────────────────────
 function showToast(message, type = 'info', duration = 3500) {
@@ -77,25 +78,4 @@ function timeAgo(dateStr) {
   if (diff < 3600) return Math.floor(diff / 60) + ' menit lalu';
   if (diff < 86400) return Math.floor(diff / 3600) + ' jam lalu';
   return formatDate(dateStr);
-}
-
-// ── Mock data (dipakai saat backend belum siap) ──────────────
-const MOCK = {
-  user: { id: 1, name: 'Siti Aminah', email: 'siti@example.com', role: 'pasien', avatar: null },
-
-  doctors: [
-    { id: 1, name: 'dr. Susanti Wulandari, Sp.KK', specialty: 'Spesialis Kulit & Kelamin', rating: 4.9, exp: 5, patients: 320, price: 45000, available: true, avatar: null },
-    { id: 2, name: 'dr. Budi Santoso, Sp.M',        specialty: 'Spesialis Mata',            rating: 4.7, exp: 8, patients: 280, price: 60000, available: true,  avatar: null },
-    { id: 3, name: 'dr. Fenny Nurmahdi',             specialty: 'Dokter Umum',               rating: 4.8, exp: 3, patients: 210, price: 30000, available: false, avatar: null },
-    { id: 4, name: 'dr. Ika Syafitri, Sp.PD',        specialty: 'Spesialis Penyakit Dalam',  rating: 4.6, exp: 6, patients: 195, price: 55000, available: true,  avatar: null },
-  ],
-
-  specialties: ['Semua', 'Dokter Umum', 'Spesialis Kulit & Kelamin', 'Spesialis Mata', 'Spesialis Penyakit Dalam', 'THT'],
-
-  consultations: [
-    { id: 1, doctor: 'dr. Susanti Wulandari, Sp.KK', specialty: 'Spesialis Kulit', date: '2024-11-24', status: 'selesai', complaint: 'Jerawat meradang dan gatal di pipi kanan', diagnosis: 'Acne Vulgaris Grade II' },
-    { id: 2, doctor: 'dr. Budi Santoso, Sp.M',        specialty: 'Spesialis Mata',  date: '2024-10-15', status: 'selesai', complaint: 'Mata merah dan gatal',                    diagnosis: 'Konjungtivitis Alergi' },
-  ],
-
-  slots: ['08:00', '09:00', '10:00', '11:00', '13:00', '14:00', '15:00', '16:00'],
 };
