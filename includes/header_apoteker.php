@@ -1,0 +1,81 @@
+<?php
+$current_page = basename($_SERVER['PHP_SELF']);
+?>
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Apoteker Panel - CareSync</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js" defer></script>
+</head>
+<body class="bg-gray-50 text-gray-800 font-sans antialiased flex h-screen overflow-hidden">
+
+    <aside class="w-64 bg-white shadow-lg border-r border-gray-200 flex flex-col hidden md:flex z-20">
+        <div class="h-16 flex items-center px-6 border-b border-gray-100 shrink-0">
+            <i class="fa-solid fa-notes-medical text-teal-600 text-2xl mr-2"></i>
+            <span class="text-xl font-bold text-gray-900 tracking-tight">Care<span class="text-teal-600">Sync</span> <span class="text-xs text-gray-500 font-normal">Apoteker</span></span>
+        </div>
+
+        <nav class="flex-1 px-4 py-6 space-y-2 overflow-y-auto">
+            <a href="dashboard.php" class="flex items-center px-4 py-3 rounded-xl transition <?php echo ($current_page == 'dashboard.php') ? 'bg-teal-600 text-white shadow-md' : 'text-gray-600 hover:bg-teal-50 hover:text-teal-600'; ?>">
+                <i class="fa-solid fa-clipboard-list w-6"></i>
+                <span class="font-medium ml-3">Antrean Resep</span>
+            </a>
+            
+            <a href="inventory.php" class="flex items-center px-4 py-3 rounded-xl transition <?php echo ($current_page == 'inventory.php') ? 'bg-teal-600 text-white shadow-md' : 'text-gray-600 hover:bg-teal-50 hover:text-teal-600'; ?>">
+                <i class="fa-solid fa-boxes-stacked w-6"></i>
+                <span class="font-medium ml-3">Stok Obat</span>
+            </a>
+
+            <a href="history.php" class="flex items-center px-4 py-3 rounded-xl transition <?php echo ($current_page == 'history.php') ? 'bg-teal-600 text-white shadow-md' : 'text-gray-600 hover:bg-teal-50 hover:text-teal-600'; ?>">
+                <i class="fa-solid fa-clock-rotate-left w-6"></i>
+                <span class="font-medium ml-3">Riwayat Transaksi</span>
+            </a>
+        </nav>
+
+        <div class="p-4 border-t border-gray-100 shrink-0">
+            <a href="../../logout.php" class="flex items-center px-4 py-3 text-red-500 hover:bg-red-50 hover:text-red-600 rounded-xl transition font-bold group">
+                <i class="fa-solid fa-right-from-bracket w-6 group-hover:-translate-x-1 transition-transform"></i>
+                <span class="ml-3">Keluar Sistem</span>
+            </a>
+        </div>
+    </aside>
+
+    <main class="flex-1 flex flex-col h-screen overflow-hidden">
+        <header class="h-16 bg-white border-b border-gray-200 flex items-center justify-between px-6 z-10 shrink-0">
+            <div class="text-gray-500 md:hidden">
+                <i class="fa-solid fa-bars text-xl cursor-pointer"></i>
+            </div>
+            
+            <div class="flex items-center space-x-4 ml-auto">
+                <button class="text-gray-400 hover:text-teal-600 transition relative">
+                    <i class="fa-solid fa-bell text-xl"></i>
+                    <span class="absolute top-0 right-0 -mt-1 -mr-1 flex h-3 w-3 items-center justify-center rounded-full bg-red-500 text-[8px] text-white">5</span>
+                </button>
+                
+                <div class="relative ml-2 pl-4 border-l border-gray-200" x-data="{ profileOpen: false }">
+                    <button @click="profileOpen = !profileOpen" @click.away="profileOpen = false" class="flex items-center gap-3 focus:outline-none hover:bg-gray-50 py-1 px-2 rounded-lg transition">
+                        <img src="https://ui-avatars.com/api/?name=Apoteker+Rina&background=0D9488&color=fff" alt="Apoteker" class="w-8 h-8 rounded-full object-cover border border-gray-200">
+                        <div class="hidden sm:flex flex-col text-left">
+                            <span class="text-sm font-bold text-gray-800 leading-none">Rina M., S.Farm</span>
+                            <span class="text-[10px] text-gray-500 mt-1 leading-none">Kepala Apotek</span>
+                        </div>
+                        <i class="fa-solid fa-chevron-down text-xs text-gray-400 ml-1 transition-transform" :class="profileOpen ? 'rotate-180' : ''"></i>
+                    </button>
+                    <div x-show="profileOpen" style="display: none;" class="absolute right-0 mt-3 w-56 bg-white rounded-xl shadow-lg py-2 border border-gray-100 z-50">
+                        <div class="px-4 py-2 mb-2 border-b border-gray-50">
+                            <p class="text-xs text-gray-500">Login sebagai</p>
+                            <p class="text-sm font-bold text-gray-900 truncate">rina.m@caresync.com</p>
+                        </div>
+                        <a href="../../logout.php" class="flex items-center px-4 py-2 text-sm text-red-600 hover:bg-red-50 transition">
+                            <i class="fa-solid fa-right-from-bracket w-5"></i> Keluar
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </header>
+
+        <div class="flex-1 overflow-y-auto bg-gray-50 relative">
