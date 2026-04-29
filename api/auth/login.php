@@ -1,62 +1,62 @@
 <?php
-// Path: api/auth/login.php
-header("Access-Control-Allow-Origin: *");
-header("Content-Type: application/json; charset=UTF-8");
-
 require_once '../../includes/config.php';
 
-// 1. Pastikan session dimulai (aman digunakan agar tidak bentrok jika di config.php sudah ada)
-if (session_status() === PHP_SESSION_NONE) {
-    session_start();
-}
-
-$json_data = file_get_contents("php://input");
-$data = json_decode($json_data, true);
-
-$email = trim($data['email'] ?? '');
+$data = jsonInput();
+$email = normalizeEmail($data['email'] ?? '');
 $password = $data['password'] ?? '';
 
-// Validasi input kosong
-if (empty($email) || empty($password)) {
-    echo json_encode(["status" => "error", "message" => "Email dan password wajib diisi!"]);
-    exit;
+if ($email === '' || $password === '') {
+    jsonResponse(['status' => 'error', 'message' => 'Email dan password wajib diisi!'], 422);
+}
+
+if (!isValidEmail($email)) {
+    jsonResponse(['status' => 'error', 'message' => 'Format email tidak valid.'], 422);
 }
 
 try {
-    // Cari user berdasarkan email
-    $stmt = $pdo->prepare("SELECT id, nama, email, password, role FROM users WHERE email = :email");
+    $stmt = $pdo->prepare('SELECT id, nama, email, password, role FROM users WHERE email = :email');
     $stmt->execute([':email' => $email]);
-    $user = $stmt->fetch(PDO::FETCH_ASSOC);
+    $user = $stmt->fetch();
 
-    // Verifikasi keberadaan user dan kecocokan password hasil hash
     if ($user && password_verify($password, $user['password'])) {
-        // Buat token dummy untuk session frontend
-        $token = bin2hex(random_bytes(16));
+        if (password_needs_rehash($user['password'], PASSWORD_DEFAULT)) {
+            $rehashStmt = $pdo->prepare('UPDATE users SET password = :password WHERE id = :id');
+            $rehashStmt->execute([
+                ':password' => password_hash($password, PASSWORD_DEFAULT),
+                ':id' => $user['id'],
+            ]);
+        }
 
-        // 2. ---> KUNCI UTAMA: SIMPAN DATA KE SESSION PHP SISI SERVER <---
-        $_SESSION['user_id'] = $user['id'];
-        $_SESSION['role']    = $user['role'];
-        $_SESSION['nama']    = $user['nama'];
-        // -----------------------------------------------------------------
-
-        echo json_encode([
-            "status" => "success",
-            "message" => "Login berhasil",
-            "data" => [
-                "token" => $token,
-                "user" => [
-                    "id" => $user['id'],
-                    "name" => $user['nama'],
-                    "email" => $user['email'],
-                    "role" => $user['role']
-                ]
-            ]
+        $authUser = [
+            'id' => (int) $user['id'],
+            'name' => $user['nama'],
+            'email' => $user['email'],
+            'role' => $user['role'] ?: 'user',
+        ];
+        $token = issueAuthToken($authUser);
+        writeAuditLog($pdo, 'auth.login.password', 'success', (int) $user['id'], 'users', (string) $user['id'], [
+            'email' => $email,
         ]);
-    } else {
-        // Jika email tidak ada atau password salah
-        echo json_encode(["status" => "error", "message" => "Email atau password salah!"]);
+
+        jsonResponse([
+            'status' => 'success',
+            'message' => 'Login berhasil',
+            'data' => [
+                'token' => $token,
+                'user' => $authUser,
+            ],
+        ]);
     }
-} catch (PDOException $e) {
-    echo json_encode(["status" => "error", "message" => "Database error: " . $e->getMessage()]);
+
+    writeAuditLog($pdo, 'auth.login.password', 'failed', null, 'users', $email, [
+        'email' => $email,
+        'reason' => 'invalid_credentials',
+    ]);
+    jsonResponse(['status' => 'error', 'message' => 'Email atau password salah!'], 401);
+} catch (Throwable $e) {
+    writeAuditLog($pdo, 'auth.login.password', 'failed', null, 'users', $email, [
+        'email' => $email,
+        'reason' => 'server_error',
+    ]);
+    handleServerException($e, 'Gagal memproses login.');
 }
-?>

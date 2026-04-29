@@ -1,85 +1,109 @@
 <?php
-header("Access-Control-Allow-Origin: *");
-header("Content-Type: application/json; charset=UTF-8");
 require_once '../../includes/config.php';
 
-$data = json_decode(file_get_contents("php://input"), true);
-$nama = trim($data['nama'] ?? '');
-$email = trim($data['email'] ?? '');
+$data = jsonInput();
+$nama = sanitizeText($data['nama'] ?? '', 100);
+$email = normalizeEmail($data['email'] ?? '');
 $password = $data['password'] ?? '';
-$gender = !empty($data['gender']) ? trim($data['gender']) : null;
-$dob = !empty($data['dob']) ? trim($data['dob']) : null;
-$phone = !empty($data['phone']) ? trim($data['phone']) : null;
+$gender = !empty($data['gender']) ? sanitizeText($data['gender'], 20) : null;
+$dob = !empty($data['dob']) ? trim((string) $data['dob']) : null;
+$phone = !empty($data['phone']) ? preg_replace('/[^\d+]/', '', (string) $data['phone']) : null;
 $otp = trim($data['otp'] ?? '');
 
-if (session_status() === PHP_SESSION_NONE) {
-    session_start();
+if ($nama === '' || $email === '' || $password === '' || $otp === '') {
+    jsonResponse(['status' => 'error', 'message' => 'Semua data dan OTP wajib diisi!'], 422);
 }
-// Misal variabel ID user barunya adalah $newUserId
-$_SESSION['user_id'] = $newUserId;
-$_SESSION['role']    = 'user';
 
-if (empty($nama) || empty($email) || empty($password) || empty($otp)) {
-    echo json_encode(["status" => "error", "message" => "Semua data dan OTP wajib diisi!"]);
-    exit;
+if (!isValidEmail($email)) {
+    jsonResponse(['status' => 'error', 'message' => 'Format email tidak valid.'], 422);
+}
+
+if (!isValidOtp($otp)) {
+    jsonResponse(['status' => 'error', 'message' => 'Format OTP tidak valid.'], 422);
+}
+
+$passwordError = validatePasswordStrength($password);
+if ($passwordError !== null) {
+    jsonResponse(['status' => 'error', 'message' => $passwordError], 422);
 }
 
 try {
-    // 1. Cek OTP di tabel otp_requests
-    $stmt = $pdo->prepare("SELECT otp_code, otp_expiry FROM otp_requests WHERE email = :email");
+    $stmt = $pdo->prepare('SELECT otp_code, otp_expiry FROM otp_requests WHERE email = :email');
     $stmt->execute([':email' => $email]);
-    $otpData = $stmt->fetch(PDO::FETCH_ASSOC);
+    $otpData = $stmt->fetch();
 
     if (!$otpData) {
-        echo json_encode(["status" => "error", "message" => "Sesi OTP tidak ditemukan atau email tidak valid!"]);
-        exit;
+        writeAuditLog($pdo, 'auth.register', 'failed', null, 'users', $email, [
+            'email' => $email,
+            'reason' => 'otp_session_missing',
+        ]);
+        jsonResponse(['status' => 'error', 'message' => 'Sesi OTP tidak ditemukan atau email tidak valid!'], 422);
     }
 
     $currentTime = date('Y-m-d H:i:s');
     if ($currentTime > $otpData['otp_expiry']) {
-        echo json_encode(["status" => "error", "message" => "Kode OTP sudah kadaluarsa! Silakan minta ulang."]);
-        exit;
+        writeAuditLog($pdo, 'auth.register', 'failed', null, 'users', $email, [
+            'email' => $email,
+            'reason' => 'otp_expired',
+        ]);
+        jsonResponse(['status' => 'error', 'message' => 'Kode OTP sudah kadaluarsa! Silakan minta ulang.'], 422);
     }
 
     if ($otp !== $otpData['otp_code']) {
-        echo json_encode(["status" => "error", "message" => "Kode OTP salah!"]);
-        exit;
+        writeAuditLog($pdo, 'auth.register', 'failed', null, 'users', $email, [
+            'email' => $email,
+            'reason' => 'otp_mismatch',
+        ]);
+        jsonResponse(['status' => 'error', 'message' => 'Kode OTP salah!'], 422);
     }
 
-    // 2. OTP Benar -> Masukkan ke tabel users
+    $existsStmt = $pdo->prepare('SELECT id FROM users WHERE email = :email');
+    $existsStmt->execute([':email' => $email]);
+    if ($existsStmt->fetchColumn()) {
+        jsonResponse(['status' => 'error', 'message' => 'Email sudah terdaftar! Silakan login.'], 409);
+    }
+
     $hashedPassword = password_hash($password, PASSWORD_DEFAULT);
-    $insertUser = $pdo->prepare("INSERT INTO users (nama, email, password, gender, dob, phone, role) VALUES (:nama, :email, :password, :gender, :dob, :phone, 'user') RETURNING id");
+    $insertUser = $pdo->prepare(
+        "INSERT INTO users (nama, email, password, gender, dob, phone, role)
+         VALUES (:nama, :email, :password, :gender, :dob, :phone, 'user')
+         RETURNING id"
+    );
     $insertUser->execute([
         ':nama' => $nama,
         ':email' => $email,
         ':password' => $hashedPassword,
         ':gender' => $gender,
         ':dob' => $dob,
-        ':phone' => $phone
+        ':phone' => $phone,
     ]);
-    
-    $newUserId = $insertUser->fetchColumn();
+    $newUserId = (int) $insertUser->fetchColumn();
 
-    // 3. Bersihkan tabel otp_requests agar rapi
-    $pdo->prepare("DELETE FROM otp_requests WHERE email = :email")->execute([':email' => $email]);
+    $pdo->prepare('DELETE FROM otp_requests WHERE email = :email')->execute([':email' => $email]);
 
-    // 4. Buat Token & Auto Login
-    $token = bin2hex(random_bytes(16));
-    echo json_encode([
-        "status" => "success",
-        "message" => "Pendaftaran berhasil!",
-        "data" => [
-            "token" => $token,
-            "user" => [
-                "id" => $newUserId,
-                "name" => $nama,
-                "email" => $email,
-                "role" => "user"
-            ]
-        ]
+    $authUser = [
+        'id' => $newUserId,
+        'name' => $nama,
+        'email' => $email,
+        'role' => 'user',
+    ];
+    $token = issueAuthToken($authUser);
+    writeAuditLog($pdo, 'auth.register', 'success', $newUserId, 'users', (string) $newUserId, [
+        'email' => $email,
     ]);
 
-} catch (PDOException $e) {
-    echo json_encode(["status" => "error", "message" => "Database error: " . $e->getMessage()]);
+    jsonResponse([
+        'status' => 'success',
+        'message' => 'Pendaftaran berhasil!',
+        'data' => [
+            'token' => $token,
+            'user' => $authUser,
+        ],
+    ], 201);
+} catch (Throwable $e) {
+    writeAuditLog($pdo, 'auth.register', 'failed', null, 'users', $email, [
+        'email' => $email,
+        'reason' => 'server_error',
+    ]);
+    handleServerException($e, 'Pendaftaran gagal diproses.');
 }
-?>

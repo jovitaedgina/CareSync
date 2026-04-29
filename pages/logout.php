@@ -1,9 +1,7 @@
 <?php
 require_once __DIR__ . '/../includes/config.php';
 
-// 1. Bersihkan session PHP
-$_SESSION = [];
-session_destroy();
+clearAuthCookie();
 ?>
 
 <!DOCTYPE html>
@@ -14,11 +12,10 @@ session_destroy();
 </head>
 <body>
     <script>
-        // 2. Hapus token sesuai dengan key di app.js
+        // Hapus token frontend lalu paksa ke halaman login
         localStorage.removeItem('em_token');
         localStorage.removeItem('em_user');
-        
-        // 3. Gunakan replace agar tidak bisa di-back
+
         window.location.replace('<?= BASE_URL ?>/pages/login.php');
     </script>
 </body>
