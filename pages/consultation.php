@@ -1,421 +1,1646 @@
 <?php
 require_once __DIR__ . '/../includes/config.php';
-$pageTitle   = 'Konsultasi â€” CareSync';
-$currentPage = 'booking';
+require_once __DIR__ . '/../includes/booking_helpers.php';
+
+requireLogin();
+
+$pageTitle = 'Ruang Konsultasi - CareSync';
+$currentPage = 'history';
+
+$user = currentUser();
+$userId = (int) ($user['id'] ?? 0);
+$consultations = getUserConsultations($pdo, $userId);
+$requestedConsultationId = (int) ($_GET['consultation_id'] ?? 0);
+$selectedConsultation = null;
+
+foreach ($consultations as $consultation) {
+    if ($consultation['id'] === $requestedConsultationId) {
+        $selectedConsultation = $consultation;
+        break;
+    }
+}
+
+if (!$selectedConsultation && !empty($consultations)) {
+    $selectedConsultation = $consultations[0];
+}
+
+$initialMessages = [];
+$initialLastMessageId = 0;
+
+if ($selectedConsultation) {
+    ensureConsultationIntroMessage($pdo, $selectedConsultation);
+    $selectedConsultation = findAccessibleConsultation($pdo, $selectedConsultation['id'], $userId) ?? $selectedConsultation;
+    $initialMessages = getConsultationMessages($pdo, $selectedConsultation['id']);
+
+    foreach ($initialMessages as $message) {
+        $initialLastMessageId = max($initialLastMessageId, (int) $message['id']);
+    }
+}
+
 include __DIR__ . '/../includes/header.php';
 ?>
 
 <style>
-  .consult-layout {
-    display: grid; grid-template-columns: 300px 1fr;
-    height: calc(100vh - var(--nav-h) - 2px); overflow: hidden;
+  .consult-shell {
+    min-height: calc(100vh - var(--nav-h));
+    background:
+      radial-gradient(circle at top left, rgba(29, 78, 216, 0.08), transparent 28%),
+      linear-gradient(180deg, #f8fbff 0%, #f8fafc 42%, #eef4ff 100%);
+    padding: 28px 20px 32px;
   }
 
-  /* Sidebar daftar konsultasi */
+  .consult-frame {
+    max-width: 1380px;
+    margin: 0 auto;
+    display: grid;
+    grid-template-columns: 320px minmax(0, 1fr);
+    gap: 22px;
+    align-items: start;
+  }
+
+  .consult-panel {
+    background: rgba(255, 255, 255, 0.94);
+    border: 1px solid rgba(148, 163, 184, 0.18);
+    border-radius: 28px;
+    box-shadow: 0 18px 48px -28px rgba(15, 23, 42, 0.22);
+    backdrop-filter: blur(12px);
+  }
+
   .consult-sidebar {
-    border-right: 1px solid var(--gray-200); background: #fff;
-    display: flex; flex-direction: column; overflow: hidden;
+    overflow: hidden;
+    position: sticky;
+    top: 92px;
   }
-  .sidebar-header { padding: 20px; border-bottom: 1px solid var(--gray-100); }
-  .consult-list { overflow-y: auto; flex: 1; }
+
+  .sidebar-top {
+    padding: 22px;
+    border-bottom: 1px solid rgba(226, 232, 240, 0.9);
+  }
+
+  .sidebar-caption {
+    margin: 0 0 6px;
+    font-size: 12px;
+    font-weight: 800;
+    letter-spacing: .16em;
+    text-transform: uppercase;
+    color: #64748b;
+  }
+
+  .sidebar-title {
+    margin: 0;
+    font-size: 24px;
+    font-weight: 800;
+    color: #0f172a;
+  }
+
+  .sidebar-subtitle {
+    margin: 10px 0 0;
+    color: #64748b;
+    font-size: 14px;
+    line-height: 1.55;
+  }
+
+  .sidebar-search {
+    position: relative;
+    margin-top: 16px;
+  }
+
+  .sidebar-search input {
+    width: 100%;
+    border: 1px solid #dbe4f0;
+    background: #f8fafc;
+    border-radius: 18px;
+    padding: 12px 14px 12px 40px;
+    font: inherit;
+    font-size: 14px;
+    outline: none;
+    transition: .2s ease;
+  }
+
+  .sidebar-search input:focus {
+    border-color: #2563eb;
+    background: #fff;
+    box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.08);
+  }
+
+  .sidebar-search i {
+    position: absolute;
+    left: 14px;
+    top: 50%;
+    transform: translateY(-50%);
+    color: #94a3b8;
+  }
+
+  .consult-list {
+    max-height: calc(100vh - 210px);
+    overflow-y: auto;
+    padding: 8px;
+  }
+
   .consult-item {
-    padding: 14px 20px; cursor: pointer; transition: background .15s;
-    border-bottom: 1px solid var(--gray-50); display: flex; gap: 10px;
+    width: 100%;
+    text-align: left;
+    border: none;
+    background: transparent;
+    display: flex;
+    gap: 14px;
+    padding: 14px;
+    border-radius: 22px;
+    cursor: pointer;
+    transition: .2s ease;
+    font: inherit;
   }
-  .consult-item:hover   { background: var(--gray-50); }
-  .consult-item.active  { background: var(--primary-light); }
-  .consult-item-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--primary); flex-shrink: 0; margin-top: 6px; }
 
-  /* Chat area */
-  .chat-area { display: flex; flex-direction: column; background: var(--gray-50); overflow: hidden; }
+  .consult-item:hover {
+    background: #f8fafc;
+  }
+
+  .consult-item.active {
+    background: linear-gradient(135deg, rgba(29, 78, 216, 0.12), rgba(59, 130, 246, 0.06));
+    box-shadow: inset 0 0 0 1px rgba(37, 99, 235, 0.12);
+  }
+
+  .consult-avatar {
+    width: 48px;
+    height: 48px;
+    border-radius: 16px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    color: #fff;
+    font-size: 14px;
+    font-weight: 800;
+    box-shadow: 0 10px 24px -16px rgba(15, 23, 42, 0.45);
+  }
+
+  .consult-item-body {
+    min-width: 0;
+    flex: 1;
+  }
+
+  .consult-item-row {
+    display: flex;
+    justify-content: space-between;
+    gap: 10px;
+    align-items: start;
+    margin-bottom: 3px;
+  }
+
+  .consult-item-name {
+    margin: 0;
+    color: #0f172a;
+    font-size: 14px;
+    font-weight: 800;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .consult-item-time {
+    flex-shrink: 0;
+    color: #94a3b8;
+    font-size: 11px;
+    font-weight: 700;
+  }
+
+  .consult-item-subtitle {
+    margin: 0 0 6px;
+    color: #2563eb;
+    font-size: 12px;
+    font-weight: 700;
+  }
+
+  .consult-item-preview {
+    margin: 0;
+    color: #64748b;
+    font-size: 12px;
+    line-height: 1.5;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .status-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 10px;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: .02em;
+  }
+
+  .status-menunggu {
+    background: #fff7ed;
+    color: #c2410c;
+  }
+
+  .status-berjalan {
+    background: #ecfdf5;
+    color: #047857;
+  }
+
+  .status-selesai {
+    background: #eff6ff;
+    color: #1d4ed8;
+  }
+
+  .chat-panel {
+    overflow: hidden;
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr) auto;
+    min-height: calc(100vh - 100px);
+  }
+
   .chat-header {
-    background: #fff; padding: 14px 24px; border-bottom: 1px solid var(--gray-200);
-    display: flex; align-items: center; gap: 14px;
+    padding: 22px 24px;
+    border-bottom: 1px solid rgba(226, 232, 240, 0.92);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 16px;
+    background: linear-gradient(180deg, rgba(248, 250, 252, 0.95), rgba(255, 255, 255, 0.95));
   }
-  .chat-messages { flex: 1; overflow-y: auto; padding: 20px 24px; display: flex; flex-direction: column; gap: 12px; }
 
-  .msg-row { display: flex; gap: 8px; align-items: flex-end; max-width: 70%; }
-  .msg-row.mine { align-self: flex-end; flex-direction: row-reverse; }
-  .msg-bubble {
-    padding: 10px 14px; border-radius: 16px; font-size: 14px; line-height: 1.5;
-    max-width: 100%; word-break: break-word;
+  .chat-header-main {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    min-width: 0;
   }
-  .msg-bubble.theirs { background: #fff; color: var(--gray-800); border-bottom-left-radius: 4px; box-shadow: var(--shadow-sm); }
-  .msg-bubble.mine   { background: var(--primary); color: #fff; border-bottom-right-radius: 4px; }
-  .msg-time { font-size: 10px; color: var(--gray-400); margin-top: 2px; }
+
+  .chat-header-avatar {
+    width: 58px;
+    height: 58px;
+    border-radius: 20px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #fff;
+    font-size: 18px;
+    font-weight: 800;
+    box-shadow: 0 22px 32px -26px rgba(15, 23, 42, 0.65);
+  }
+
+  .chat-header-copy {
+    min-width: 0;
+  }
+
+  .chat-header-copy h1 {
+    margin: 0;
+    font-size: 22px;
+    font-weight: 800;
+    color: #0f172a;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .chat-header-copy p {
+    margin: 6px 0 0;
+    font-size: 14px;
+    color: #64748b;
+  }
+
+  .chat-header-actions {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+
+  .chat-meta {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    padding: 11px 14px;
+    border-radius: 18px;
+    background: #f8fafc;
+    color: #475569;
+    font-size: 13px;
+    font-weight: 700;
+  }
+
+  .chat-meta-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #10b981;
+    box-shadow: 0 0 0 6px rgba(16, 185, 129, 0.12);
+  }
+
+  .chat-action-btn {
+    border: none;
+    border-radius: 16px;
+    padding: 12px 16px;
+    font: inherit;
+    font-weight: 800;
+    cursor: pointer;
+    transition: .2s ease;
+  }
+
+  .chat-action-btn.primary {
+    background: linear-gradient(135deg, #1d4ed8, #2563eb);
+    color: #fff;
+    box-shadow: 0 18px 24px -24px rgba(29, 78, 216, 0.95);
+  }
+
+  .chat-action-btn.ghost {
+    background: #eff6ff;
+    color: #1d4ed8;
+  }
+
+  .chat-action-btn:hover {
+    transform: translateY(-1px);
+  }
+
+  .chat-action-btn:disabled {
+    cursor: not-allowed;
+    opacity: .55;
+    transform: none;
+    box-shadow: none;
+  }
+
+  .chat-messages {
+    padding: 24px;
+    overflow-y: auto;
+    background:
+      linear-gradient(180deg, rgba(248, 250, 252, 0.58), rgba(255, 255, 255, 0.96)),
+      radial-gradient(circle at top right, rgba(29, 78, 216, 0.05), transparent 30%);
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+
+  .chat-day-banner {
+    align-self: center;
+    background: rgba(226, 232, 240, 0.92);
+    color: #475569;
+    padding: 7px 14px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 700;
+  }
+
+  .msg-row {
+    display: flex;
+    gap: 10px;
+    align-items: flex-end;
+    max-width: min(74%, 720px);
+  }
+
+  .msg-row.mine {
+    align-self: flex-end;
+    flex-direction: row-reverse;
+  }
+
+  .msg-mini-avatar {
+    width: 34px;
+    height: 34px;
+    border-radius: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #fff;
+    font-size: 11px;
+    font-weight: 800;
+    flex-shrink: 0;
+  }
+
+  .msg-card {
+    min-width: 0;
+  }
+
+  .msg-bubble {
+    padding: 12px 14px;
+    border-radius: 18px;
+    font-size: 14px;
+    line-height: 1.6;
+    word-break: break-word;
+    white-space: pre-wrap;
+    box-shadow: 0 14px 24px -22px rgba(15, 23, 42, 0.45);
+  }
+
+  .msg-bubble.theirs {
+    background: #fff;
+    color: #0f172a;
+    border-bottom-left-radius: 6px;
+  }
+
+  .msg-bubble.mine {
+    background: linear-gradient(135deg, #1d4ed8, #2563eb);
+    color: #fff;
+    border-bottom-right-radius: 6px;
+  }
+
+  .msg-bubble a {
+    color: inherit;
+    font-weight: 800;
+    text-decoration: underline;
+  }
+
+  .msg-time {
+    margin-top: 5px;
+    color: #94a3b8;
+    font-size: 11px;
+    font-weight: 700;
+  }
 
   .chat-input-area {
-    background: #fff; padding: 14px 20px; border-top: 1px solid var(--gray-200);
-    display: flex; gap: 10px; align-items: flex-end;
+    padding: 18px 20px 20px;
+    border-top: 1px solid rgba(226, 232, 240, 0.92);
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 14px;
+    align-items: end;
+    background: rgba(255, 255, 255, 0.94);
   }
+
+  .chat-input-box {
+    border: 1px solid #dbe4f0;
+    background: #f8fafc;
+    border-radius: 22px;
+    padding: 6px;
+    display: flex;
+    gap: 8px;
+    align-items: end;
+  }
+
   .chat-textarea {
-    flex: 1; resize: none; border: 1.5px solid var(--gray-200); border-radius: var(--radius-lg);
-    padding: 10px 14px; font-family: var(--font-main); font-size: 14px; outline: none;
-    max-height: 120px; line-height: 1.5; transition: border-color .2s;
+    width: 100%;
+    min-height: 54px;
+    max-height: 140px;
+    border: none;
+    background: transparent;
+    resize: none;
+    outline: none;
+    padding: 12px 14px;
+    font: inherit;
+    font-size: 14px;
+    line-height: 1.55;
+    color: #0f172a;
   }
-  .chat-textarea:focus { border-color: var(--primary); }
 
-  /* Video call overlay */
+  .chat-send-btn {
+    width: 54px;
+    height: 54px;
+    border: none;
+    border-radius: 18px;
+    background: linear-gradient(135deg, #1d4ed8, #2563eb);
+    color: #fff;
+    cursor: pointer;
+    transition: .2s ease;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 18px 24px -24px rgba(29, 78, 216, 0.95);
+  }
+
+  .chat-send-btn:hover {
+    transform: translateY(-1px);
+  }
+
+  .chat-send-btn:disabled {
+    cursor: not-allowed;
+    opacity: .55;
+    transform: none;
+  }
+
+  .chat-input-note {
+    color: #94a3b8;
+    font-size: 12px;
+    font-weight: 700;
+    padding-left: 6px;
+  }
+
+  .chat-empty {
+    align-self: center;
+    text-align: center;
+    max-width: 420px;
+    padding: 28px;
+    color: #64748b;
+  }
+
+  .chat-empty i {
+    font-size: 34px;
+    color: #2563eb;
+    margin-bottom: 12px;
+  }
+
+  .empty-state {
+    max-width: 740px;
+    margin: 60px auto 0;
+    padding: 42px;
+    text-align: center;
+  }
+
+  .empty-state i {
+    width: 84px;
+    height: 84px;
+    border-radius: 28px;
+    background: #eff6ff;
+    color: #1d4ed8;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 30px;
+    margin-bottom: 18px;
+  }
+
+  .empty-state h2 {
+    margin: 0;
+    color: #0f172a;
+    font-size: 28px;
+    font-weight: 800;
+  }
+
+  .empty-state p {
+    max-width: 520px;
+    margin: 14px auto 26px;
+    color: #64748b;
+    line-height: 1.7;
+  }
+
+  .empty-state a {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    padding: 14px 22px;
+    border-radius: 18px;
+    background: linear-gradient(135deg, #1d4ed8, #2563eb);
+    color: #fff;
+    text-decoration: none;
+    font-weight: 800;
+  }
+
+  .toast-stack {
+    position: fixed;
+    right: 22px;
+    bottom: 22px;
+    z-index: 9999;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .toast-card {
+    min-width: 270px;
+    max-width: 360px;
+    padding: 14px 16px;
+    border-radius: 18px;
+    background: rgba(15, 23, 42, 0.96);
+    color: #fff;
+    font-size: 14px;
+    font-weight: 700;
+    box-shadow: 0 20px 36px -24px rgba(15, 23, 42, 0.7);
+  }
+
   .video-overlay {
-    position: fixed; inset: 0; z-index: 300;
-    background: #0a0a12; display: flex; flex-direction: column;
-    animation: fadeIn .3s ease;
+    position: fixed;
+    inset: 0;
+    background: rgba(2, 6, 23, 0.95);
+    z-index: 1200;
+    display: none;
+    flex-direction: column;
   }
-  .video-main { flex: 1; position: relative; display: flex; align-items: center; justify-content: center; }
-  .video-remote {
-    width: 100%; height: 100%; object-fit: cover; background: #1a1a2e;
-    display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 12px;
+
+  .video-overlay.active {
+    display: flex;
   }
-  .video-self {
-    position: absolute; bottom: 20px; right: 20px;
-    width: 160px; height: 120px; background: #2d2d44; border-radius: 12px;
-    display: flex; align-items: center; justify-content: center; border: 2px solid rgba(255,255,255,.15);
+
+  .video-topbar {
+    padding: 16px 22px;
+    color: #fff;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 16px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
   }
+
+  .video-surface {
+    flex: 1;
+    position: relative;
+    overflow: hidden;
+    background:
+      radial-gradient(circle at top, rgba(37, 99, 235, 0.22), transparent 36%),
+      linear-gradient(180deg, #111827, #020617);
+  }
+
+  .video-card {
+    text-align: center;
+    color: rgba(255, 255, 255, 0.92);
+    max-width: 520px;
+    padding: 24px;
+  }
+
+  .video-avatar {
+    width: 96px;
+    height: 96px;
+    border-radius: 32px;
+    margin: 0 auto 16px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 28px;
+    font-weight: 800;
+    color: #fff;
+    box-shadow: 0 24px 48px -28px rgba(37, 99, 235, 0.85);
+  }
+
+  .video-meeting-shell {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .video-placeholder {
+    position: absolute;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    padding: 24px;
+    z-index: 1;
+  }
+
+  .video-placeholder.hidden {
+    display: none;
+  }
+
+  .video-room-meta {
+    margin-top: 14px;
+    font-size: 13px;
+    color: rgba(255, 255, 255, 0.72);
+    word-break: break-word;
+  }
+
+  .video-meeting {
+    position: absolute;
+    inset: 0;
+    z-index: 2;
+  }
+
   .video-controls {
-    display: flex; gap: 12px; justify-content: center; padding: 20px;
-    background: rgba(0,0,0,.4);
+    padding: 18px 22px 24px;
+    display: flex;
+    justify-content: center;
+    gap: 12px;
   }
-  .vc-btn {
-    width: 52px; height: 52px; border-radius: 50%; border: none; cursor: pointer;
-    display: flex; align-items: center; justify-content: center; transition: all .2s;
-    background: rgba(255,255,255,.15); color: #fff;
-  }
-  .vc-btn:hover { background: rgba(255,255,255,.25); transform: scale(1.05); }
-  .vc-btn.danger { background: var(--danger); }
-  .vc-btn.danger:hover { background: #b91c1c; }
-  .vc-btn.muted  { background: rgba(255,255,255,.4); }
 
-  /* Connecting animation */
-  .connecting-pulse {
-    width: 80px; height: 80px; border-radius: 50%;
-    background: rgba(26,107,255,.2); position: relative;
-    display: flex; align-items: center; justify-content: center;
+  .video-btn {
+    width: 54px;
+    height: 54px;
+    border: none;
+    border-radius: 50%;
+    cursor: pointer;
+    color: #fff;
+    background: rgba(255, 255, 255, 0.16);
+    transition: .2s ease;
   }
-  .connecting-pulse::before, .connecting-pulse::after {
-    content: ''; position: absolute; inset: -16px; border-radius: 50%;
-    border: 2px solid rgba(26,107,255,.3); animation: pulse 2s ease-out infinite;
-  }
-  .connecting-pulse::after { animation-delay: 1s; }
-  @keyframes pulse { 0%{transform:scale(.8);opacity:1} 100%{transform:scale(1.5);opacity:0} }
 
-  @media (max-width: 768px) {
-    .consult-layout { grid-template-columns: 1fr; }
-    .consult-sidebar { display: none; }
+  .video-btn.end {
+    background: #dc2626;
+  }
+
+  .video-btn:hover {
+    transform: scale(1.03);
+  }
+
+  @media (max-width: 1080px) {
+    .consult-frame {
+      grid-template-columns: 1fr;
+    }
+
+    .consult-sidebar {
+      position: static;
+    }
+
+    .consult-list {
+      max-height: 320px;
+    }
+  }
+
+  @media (max-width: 760px) {
+    .consult-shell {
+      padding: 18px 12px 24px;
+    }
+
+    .chat-panel {
+      min-height: calc(100vh - 130px);
+    }
+
+    .chat-header {
+      padding: 18px;
+      flex-direction: column;
+      align-items: stretch;
+    }
+
+    .chat-header-actions {
+      justify-content: stretch;
+    }
+
+    .chat-meta,
+    .chat-action-btn {
+      width: 100%;
+      justify-content: center;
+    }
+
+    .chat-input-area {
+      grid-template-columns: 1fr;
+    }
+
+    .chat-send-btn {
+      width: 100%;
+      border-radius: 18px;
+    }
+
+    .msg-row {
+      max-width: 100%;
+    }
   }
 </style>
 
-<div class="consult-layout">
-
-  <!-- Sidebar -->
-  <div class="consult-sidebar">
-    <div class="sidebar-header">
-      <h4 style="margin-bottom:10px">Konsultasi Aktif</h4>
-      <div style="position:relative">
-        <svg style="position:absolute;left:10px;top:50%;transform:translateY(-50%);color:var(--gray-400)" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-        <input class="form-input" placeholder="Cari konsultasi..." style="padding-left:34px;height:36px;font-size:13px">
-      </div>
+<div class="consult-shell">
+  <?php if (!$selectedConsultation): ?>
+    <div class="consult-panel empty-state">
+      <i class="fa-solid fa-comments"></i>
+      <h2>Belum ada sesi konsultasi</h2>
+      <p>Silakan booking dokter terlebih dahulu agar pasien bisa memilih spesialisasi, mengambil slot yang tersedia, lalu masuk ke ruang chat konsultasi yang sesuai.</p>
+      <a href="<?= BASE_URL ?>/pages/booking.php">
+        <i class="fa-solid fa-calendar-plus"></i>
+        Booking Konsultasi
+      </a>
     </div>
-    <div class="consult-list">
-      <?php
-      $sessions = [
-        [1, 'dr. Susanti W., Sp.KK', 'Kulit & Kelamin', 'Hari ini 10:30', 'Selamat pagi! Ada yang...', true, 'SW', '#1a6bff'],
-        [2, 'dr. Budi Santoso, Sp.M', 'Spesialis Mata',  'Kemarin 14:00',  'Baik, hasilnya bagus...', false,'BS', '#0ea898'],
-        [3, 'dr. Fenny Nurmahdi',    'Dokter Umum',      '2 hari lalu',    'Minum obat 3x sehari ya', false,'FN', '#7c3aed'],
-      ];
-      foreach ($sessions as [$id,$name,$spec,$time,$preview,$active,$init,$col]):
-      ?>
-      <div class="consult-item <?= $active?'active':'' ?>" onclick="openSession(<?= $id ?>,'<?= addslashes($name) ?>','<?= $init ?>','<?= $col ?>')">
-        <div style="width:40px;height:40px;border-radius:10px;background:<?= $col ?>;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:800;color:#fff;flex-shrink:0"><?= $init ?></div>
-        <div style="flex:1;min-width:0">
-          <div style="display:flex;justify-content:space-between;align-items:center">
-            <span style="font-size:13px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:120px"><?= $name ?></span>
-            <span style="font-size:10px;color:var(--gray-400);flex-shrink:0;margin-left:4px"><?= $time ?></span>
-          </div>
-          <div style="font-size:11px;color:var(--gray-400)"><?= $spec ?></div>
-          <div style="font-size:12px;color:var(--gray-500);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px"><?= $preview ?></div>
-        </div>
-        <?php if ($active): ?><div class="consult-item-dot"></div><?php endif; ?>
-      </div>
-      <?php endforeach; ?>
-    </div>
-  </div>
-
-  <!-- Chat area -->
-  <div class="chat-area">
-    <!-- Header chat -->
-    <div class="chat-header">
-      <div id="chat-avatar" style="width:44px;height:44px;border-radius:12px;background:#1a6bff;display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:800;color:#fff;flex-shrink:0">SW</div>
-      <div style="flex:1">
-        <div id="chat-name" style="font-size:15px;font-weight:700">dr. Susanti Wulandari, Sp.KK</div>
-        <div style="display:flex;align-items:center;gap:6px">
-          <span style="width:8px;height:8px;border-radius:50%;background:var(--success)"></span>
-          <span style="font-size:12px;color:var(--gray-500)">Online Â· Spesialis Kulit & Kelamin</span>
-        </div>
-      </div>
-      <div style="display:flex;gap:8px">
-        <button onclick="startVideoCall()" class="btn btn-teal btn-sm">
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg>
-          Video Call
-        </button>
-        <button class="btn btn-ghost btn-icon btn-sm">
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></svg>
-        </button>
-      </div>
-    </div>
-
-    <!-- Messages -->
-    <div class="chat-messages" id="chat-messages">
-      <!-- System notice -->
-      <div style="text-align:center;padding:8px 0">
-        <span style="font-size:12px;background:var(--gray-200);color:var(--gray-500);padding:4px 12px;border-radius:99px">Sesi konsultasi dimulai Â· Hari ini 10:30</span>
-      </div>
-
-      <div class="msg-row">
-        <div style="width:32px;height:32px;border-radius:8px;background:#1a6bff;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:800;color:#fff;flex-shrink:0">SW</div>
-        <div>
-          <div class="msg-bubble theirs">Selamat pagi! Saya dr. Susanti. Ada keluhan yang ingin dikonsultasikan?</div>
-          <div class="msg-time">10:30</div>
-        </div>
-      </div>
-
-      <div class="msg-row mine">
-        <div>
-          <div class="msg-bubble mine">Selamat pagi, dok. Saya mau konsultasi masalah kulit.</div>
-          <div class="msg-time" style="text-align:right">10:31</div>
-        </div>
-      </div>
-
-      <div class="msg-row">
-        <div style="width:32px;height:32px;border-radius:8px;background:#1a6bff;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:800;color:#fff;flex-shrink:0">SW</div>
-        <div>
-          <div class="msg-bubble theirs">Baik, boleh ceritakan keluhan spesifiknya? Seperti di bagian mana, sudah berapa lama, dan ada gejala lain tidak?</div>
-          <div class="msg-time">10:32</div>
-        </div>
-      </div>
-
-      <div class="msg-row mine">
-        <div>
-          <div class="msg-bubble mine">Ada jerawat meradang di pipi kanan, sudah sekitar 2 minggu. Terasa nyeri dan gatal.</div>
-          <div class="msg-time" style="text-align:right">10:33</div>
-        </div>
-      </div>
-
-      <!-- Typing indicator -->
-      <div class="msg-row" id="typing-indicator" style="display:none">
-        <div style="width:32px;height:32px;border-radius:8px;background:#1a6bff;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:800;color:#fff;flex-shrink:0">SW</div>
-        <div class="msg-bubble theirs" style="padding:12px 16px">
-          <div style="display:flex;gap:4px;align-items:center">
-            <span style="width:6px;height:6px;border-radius:50%;background:var(--gray-400);animation:typingDot 1.4s infinite .0s"></span>
-            <span style="width:6px;height:6px;border-radius:50%;background:var(--gray-400);animation:typingDot 1.4s infinite .2s"></span>
-            <span style="width:6px;height:6px;border-radius:50%;background:var(--gray-400);animation:typingDot 1.4s infinite .4s"></span>
+  <?php else: ?>
+    <div class="consult-frame">
+      <aside class="consult-panel consult-sidebar">
+        <div class="sidebar-top">
+          <p class="sidebar-caption">Ruang Konsultasi</p>
+          <div class="sidebar-search">
+            <i class="fa-solid fa-magnifying-glass"></i>
+            <input type="text" id="consult-search" placeholder="Cari dokter atau spesialisasi...">
           </div>
         </div>
-      </div>
-    </div>
 
-    <!-- Input -->
-    <div class="chat-input-area">
-      <button class="btn btn-ghost btn-icon btn-sm" title="Lampiran">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/></svg>
-      </button>
-      <textarea id="msg-input" class="chat-textarea" rows="1" placeholder="Tulis pesan..."
-                onkeydown="handleChatKey(event)" oninput="autoResize(this)"></textarea>
-      <button onclick="sendMessage()" class="btn btn-primary btn-icon">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
-      </button>
+        <div class="consult-list" id="consult-list">
+          <?php foreach ($consultations as $consultation): ?>
+            <?php
+              $statusClass = strtolower($consultation['status']);
+              $isActive = $consultation['id'] === $selectedConsultation['id'];
+              $searchIndex = strtolower($consultation['display_name'] . ' ' . $consultation['display_subtitle'] . ' ' . $consultation['specialization']);
+            ?>
+            <button
+              type="button"
+              class="consult-item<?= $isActive ? ' active' : '' ?>"
+              data-session-id="<?= $consultation['id'] ?>"
+              data-search="<?= htmlspecialchars($searchIndex) ?>"
+            >
+              <div class="consult-avatar" style="background: <?= htmlspecialchars($consultation['avatar_color']) ?>;">
+                <?= htmlspecialchars($consultation['initials']) ?>
+              </div>
+              <div class="consult-item-body">
+                <div class="consult-item-row">
+                  <p class="consult-item-name"><?= htmlspecialchars($consultation['display_name']) ?></p>
+                  <span class="consult-item-time"><?= htmlspecialchars($consultation['last_message_label']) ?></span>
+                </div>
+                <p class="consult-item-subtitle"><?= htmlspecialchars($consultation['display_subtitle']) ?></p>
+                <p class="consult-item-preview" id="preview-<?= $consultation['id'] ?>"><?= htmlspecialchars($consultation['preview']) ?></p>
+                <span class="status-badge status-<?= $statusClass ?>" id="badge-<?= $consultation['id'] ?>">
+                  <i class="fa-solid fa-circle"></i>
+                  <?= htmlspecialchars($consultation['status']) ?>
+                </span>
+              </div>
+            </button>
+          <?php endforeach; ?>
+        </div>
+      </aside>
+
+      <section class="consult-panel chat-panel">
+        <div class="chat-header">
+          <div class="chat-header-main">
+            <div class="chat-header-avatar" id="chat-avatar" style="background: <?= htmlspecialchars($selectedConsultation['avatar_color']) ?>;">
+              <?= htmlspecialchars($selectedConsultation['initials']) ?>
+            </div>
+            <div class="chat-header-copy">
+              <h1 id="chat-title"><?= htmlspecialchars($selectedConsultation['display_name']) ?></h1>
+              <p id="chat-subtitle"><?= htmlspecialchars($selectedConsultation['display_subtitle']) ?> · Jadwal <?= htmlspecialchars($selectedConsultation['scheduled_label']) ?></p>
+            </div>
+          </div>
+
+          <div class="chat-header-actions">
+            <div class="chat-meta">
+              <span class="chat-meta-dot"></span>
+              <span id="chat-status"><?= htmlspecialchars($selectedConsultation['status']) ?></span>
+            </div>
+            <button type="button" class="chat-action-btn primary" id="start-video">
+              <i class="fa-solid fa-video"></i>
+              Video Call
+            </button>
+          </div>
+        </div>
+
+        <div class="chat-messages" id="chat-messages">
+          <div class="chat-day-banner" id="chat-day-banner">
+            Sesi dijadwalkan · <?= htmlspecialchars($selectedConsultation['scheduled_label']) ?>
+          </div>
+          <div id="chat-retention-note" class="mx-5 mt-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-medium text-amber-700">
+            <?= htmlspecialchars($selectedConsultation['chat_retention_notice'] ?? 'Riwayat chat tersedia selama konsultasi berlangsung.') ?>
+          </div>
+
+          <?php if (!$initialMessages): ?>
+            <div class="chat-empty" id="chat-empty-state">
+              <i class="fa-solid fa-comment-medical"></i>
+              <div><?= htmlspecialchars(!empty($selectedConsultation['chat_expired']) ? ($selectedConsultation['chat_retention_notice'] ?? 'Riwayat chat konsultasi sudah dihapus.') : 'Belum ada pesan. Mulai percakapan untuk konsultasi dengan dokter.') ?></div>
+            </div>
+          <?php else: ?>
+            <?php foreach ($initialMessages as $message): ?>
+              <?php $isMine = (int) $message['sender_id'] === $userId; ?>
+              <div class="msg-row<?= $isMine ? ' mine' : '' ?>" data-message-id="<?= (int) $message['id'] ?>">
+                <?php if (!$isMine): ?>
+                  <div class="msg-mini-avatar" style="background: <?= htmlspecialchars($selectedConsultation['avatar_color']) ?>;">
+                    <?= htmlspecialchars($selectedConsultation['initials']) ?>
+                  </div>
+                <?php endif; ?>
+              <div class="msg-card">
+                  <div class="msg-bubble <?= $isMine ? 'mine' : 'theirs' ?>"><?= preg_replace(
+                      '~(https?://[^\s<]+)~i',
+                      '<a href="$1" target="_blank" rel="noopener noreferrer">$1</a>',
+                      nl2br(htmlspecialchars($message['body']))
+                  ) ?></div>
+                  <div class="msg-time"<?= $isMine ? ' style="text-align:right"' : '' ?>><?= htmlspecialchars($message['time']) ?></div>
+                </div>
+              </div>
+            <?php endforeach; ?>
+          <?php endif; ?>
+        </div>
+
+        <div class="chat-input-area">
+          <div>
+            <div class="chat-input-box">
+              <textarea
+                id="msg-input"
+                class="chat-textarea"
+                rows="1"
+                placeholder="Tulis pesan untuk dokter..."
+              ></textarea>
+            </div>
+            <div class="chat-input-note">Tekan `Enter` untuk kirim, `Shift + Enter` untuk baris baru.</div>
+          </div>
+          <button type="button" class="chat-send-btn" id="send-message" aria-label="Kirim pesan">
+            <i class="fa-solid fa-paper-plane"></i>
+          </button>
+        </div>
+
+        <div id="review-panel" class="hidden border-t border-slate-100 bg-amber-50/50 px-5 py-4">
+          <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+            <div>
+              <div class="text-sm font-extrabold text-slate-900">Review Konsultasi</div>
+              <div class="text-xs text-slate-500 mt-1">Setelah diagnosis dokter terbit, Anda bisa memberi rating bintang untuk sesi ini.</div>
+            </div>
+            <div id="review-stars" class="flex items-center gap-2"></div>
+          </div>
+        </div>
+      </section>
     </div>
-  </div>
+  <?php endif; ?>
 </div>
 
-<!-- Video Call Overlay -->
-<div class="video-overlay hidden" id="video-overlay">
-  <div class="chat-header" style="padding:14px 24px;background:rgba(0,0,0,.6);border-bottom-color:rgba(255,255,255,.1)">
-    <div id="vc-avatar" style="width:40px;height:40px;border-radius:10px;background:#1a6bff;display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:800;color:#fff;flex-shrink:0">SW</div>
-    <div>
-      <div id="vc-name" style="font-size:14px;font-weight:700;color:#fff">dr. Susanti W., Sp.KK</div>
-      <div id="vc-status" style="font-size:12px;color:rgba(255,255,255,.6)">Menghubungkan...</div>
+<div class="toast-stack" id="toast-stack"></div>
+
+<div class="video-overlay" id="video-overlay">
+  <div class="video-topbar">
+    <div style="display:flex;align-items:center;gap:14px">
+      <div class="video-avatar" id="video-avatar" style="background: <?= htmlspecialchars($selectedConsultation['avatar_color'] ?? '#1D4ED8') ?>;width:52px;height:52px;border-radius:18px;font-size:18px;margin:0;">
+        <?= htmlspecialchars($selectedConsultation['initials'] ?? 'DR') ?>
+      </div>
+      <div>
+        <div id="video-title" style="font-size:16px;font-weight:800"><?= htmlspecialchars($selectedConsultation['display_name'] ?? 'Dokter CareSync') ?></div>
+        <div id="video-subtitle" style="font-size:13px;color:rgba(255,255,255,.7)">Menghubungkan ke sesi konsultasi...</div>
+      </div>
     </div>
-    <div style="margin-left:auto;display:flex;align-items:center;gap:8px">
-      <span id="vc-timer" style="font-size:13px;font-weight:700;color:#fff;display:none">00:00</span>
-      <span style="font-size:11px;background:var(--success);color:#fff;padding:3px 10px;border-radius:99px;font-weight:600">HD</span>
-    </div>
+    <div id="video-timer" style="font-size:14px;font-weight:800;color:rgba(255,255,255,.88);display:none">00:00</div>
   </div>
 
-  <div class="video-main">
-    <!-- Remote video (dokter) -->
-    <div class="video-remote" id="video-remote">
-      <div class="connecting-pulse">
-        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,.8)" stroke-width="2"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg>
-      </div>
-      <div style="color:rgba(255,255,255,.6);font-size:14px" id="vc-connecting-text">Menghubungkan ke dokter...</div>
-    </div>
-
-    <!-- Self video -->
-    <div class="video-self">
-      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,.4)" stroke-width="2"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
-    </div>
-
-    <!-- Chat panel saat video -->
-    <div id="vc-chat-panel" style="position:absolute;right:0;top:0;bottom:0;width:280px;background:rgba(0,0,0,.7);display:flex;flex-direction:column;backdrop-filter:blur(8px)">
-      <div style="padding:12px 16px;border-bottom:1px solid rgba(255,255,255,.1);font-size:13px;font-weight:700;color:#fff;display:flex;align-items:center;justify-content:space-between">
-        Live Chat
-        <button onclick="toggleChatPanel()" style="background:none;border:none;cursor:pointer;color:rgba(255,255,255,.5);font-size:18px;line-height:1">Ã—</button>
-      </div>
-      <div id="vc-messages" style="flex:1;overflow-y:auto;padding:12px;display:flex;flex-direction:column;gap:8px">
-        <div style="font-size:11px;text-align:center;color:rgba(255,255,255,.3);margin-bottom:4px">Video call dimulai</div>
-        <div>
-          <div style="font-size:10px;color:rgba(255,255,255,.4);margin-bottom:2px">Dokter Â· 10:35</div>
-          <div style="background:rgba(255,255,255,.12);border-radius:10px 10px 10px 2px;padding:8px 10px;font-size:12px;color:#fff">Halo, selamat datang di sesi konsultasi</div>
+  <div class="video-surface">
+    <div class="video-meeting-shell">
+      <div class="video-placeholder" id="video-placeholder">
+        <div class="video-card">
+          <div class="video-avatar" id="video-main-avatar" style="background: <?= htmlspecialchars($selectedConsultation['avatar_color'] ?? '#1D4ED8') ?>;">
+            <?= htmlspecialchars($selectedConsultation['initials'] ?? 'DR') ?>
+          </div>
+          <div id="video-main-title" style="font-size:22px;font-weight:800"><?= htmlspecialchars($selectedConsultation['display_name'] ?? 'Dokter CareSync') ?></div>
+          <div id="video-main-copy" style="margin-top:10px;color:rgba(255,255,255,.72)">Menyiapkan ruang Jitsi Meet untuk sesi konsultasi ini.</div>
+          <div class="video-room-meta" id="video-room-meta"></div>
         </div>
       </div>
-      <div style="padding:10px;display:flex;gap:6px">
-        <input id="vc-msg-input" style="flex:1;background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.2);border-radius:20px;padding:8px 12px;font-size:12px;color:#fff;outline:none;font-family:var(--font-main)" placeholder="Tulis pesan..." onkeydown="if(event.key==='Enter')sendVCMessage()">
-        <button onclick="sendVCMessage()" style="width:32px;height:32px;border-radius:50%;background:var(--primary);border:none;cursor:pointer;display:flex;align-items:center;justify-content:center">
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
-        </button>
-      </div>
+      <div class="video-meeting" id="jitsi-container"></div>
     </div>
   </div>
 
   <div class="video-controls">
-    <button class="vc-btn" id="btn-mic" onclick="toggleMic(this)" title="Mute/Unmute">
-      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3z"/><path d="M19 10v2a7 7 0 01-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
+    <button type="button" class="video-btn" id="open-video-external" title="Buka di tab baru">
+      <i class="fa-solid fa-up-right-from-square"></i>
     </button>
-    <button class="vc-btn" id="btn-cam" onclick="toggleCam(this)" title="Kamera">
-      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg>
-    </button>
-    <button class="vc-btn danger" onclick="endVideoCall()" title="Akhiri">
-      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.68 13.31a16 16 0 003.41 2.6l1.27-1.27a2 2 0 012.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0122 16.92v3a2 2 0 01-2.18 2A19.79 19.79 0 0111.19 19a19.5 19.5 0 01-6-6 19.79 19.79 0 01-2.93-8.63A2 2 0 014.11 2h3a2 2 0 012 1.72c.127.96.361 1.903.7 2.81a2 2 0 01-.45 2.11L8.09 9.91"/><line x1="23" y1="1" x2="1" y2="23"/></svg>
-    </button>
-    <button class="vc-btn" onclick="toggleChatPanel()" title="Chat">
-      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
+    <button type="button" class="video-btn end" id="end-video" title="Akhiri">
+      <i class="fa-solid fa-phone-slash"></i>
     </button>
   </div>
 </div>
 
-<style>
-@keyframes typingDot { 0%,60%,100%{transform:translateY(0)} 30%{transform:translateY(-6px)} }
-</style>
-
+<?php if ($selectedConsultation): ?>
 <script>
-function openSession(id, name, initials, color) {
-  document.querySelectorAll('.consult-item').forEach(i => i.classList.remove('active'));
-  event.currentTarget.classList.add('active');
-  document.getElementById('chat-avatar').textContent = initials;
-  document.getElementById('chat-avatar').style.background = color;
-  document.getElementById('chat-name').textContent = name;
+const BASE_URL = '<?= BASE_URL ?>';
+const JITSI_BASE_URL = '<?= htmlspecialchars(JITSI_BASE_URL, ENT_QUOTES) ?>';
+const MY_USER_ID = <?= $userId ?>;
+const consultations = <?= json_encode($consultations, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) ?>;
+const consultationMap = Object.fromEntries(consultations.map((item) => [item.id, item]));
+
+let currentSessionId = <?= (int) $selectedConsultation['id'] ?>;
+let lastMessageId = <?= $initialLastMessageId ?>;
+let pollTimer = null;
+let jitsiApi = null;
+let jitsiScriptPromise = null;
+let activeVideoSessionId = null;
+
+function escapeHtml(text) {
+  return String(text ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
 }
 
-function handleChatKey(e) {
-  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
-}
-function autoResize(el) {
-  el.style.height = 'auto';
-  el.style.height = Math.min(el.scrollHeight, 120) + 'px';
+function nl2brSafe(text) {
+  return escapeHtml(text).replace(/\n/g, '<br>');
 }
 
-const autoReplies = [
-  'Baik, saya mengerti. Bisa jelaskan lebih detail warna dan tekstur kulitnya?',
-  'Apakah ada riwayat alergi sebelumnya?',
-  'Dari gejala yang disebutkan, kemungkinan besar ini Acne Vulgaris. Saya akan meresepkan obat yang tepat.',
-  'Untuk sementara, hindari memencet jerawat dan gunakan sabun wajah yang lembut ya.',
-];
-let replyIdx = 0;
+function linkifySafe(text) {
+  return nl2brSafe(text).replace(
+    /(https?:\/\/[^\s<]+)/gi,
+    '<a href="$1" target="_blank" rel="noopener noreferrer">$1</a>'
+  );
+}
 
-function sendMessage() {
+function statusClass(status) {
+  const normalized = String(status || '').toLowerCase();
+  if (normalized === 'berjalan') return 'status-berjalan';
+  if (normalized === 'selesai') return 'status-selesai';
+  return 'status-menunggu';
+}
+
+function showToast(message) {
+  const stack = document.getElementById('toast-stack');
+  const toast = document.createElement('div');
+  toast.className = 'toast-card';
+  toast.textContent = message;
+  stack.appendChild(toast);
+
+  setTimeout(() => {
+    toast.style.opacity = '0';
+    toast.style.transform = 'translateY(8px)';
+    toast.style.transition = '.2s ease';
+    setTimeout(() => toast.remove(), 220);
+  }, 2600);
+}
+
+function scrollMessagesToBottom() {
+  const container = document.getElementById('chat-messages');
+  container.scrollTop = container.scrollHeight;
+}
+
+function updateSidebarSession(session) {
+  const preview = document.getElementById(`preview-${session.id}`);
+  const badge = document.getElementById(`badge-${session.id}`);
+
+  if (preview) {
+    preview.textContent = session.preview || 'Belum ada pesan.';
+  }
+
+  if (badge) {
+    badge.className = `status-badge ${statusClass(session.status)}`;
+    badge.innerHTML = `<i class="fa-solid fa-circle"></i> ${escapeHtml(session.status)}`;
+  }
+}
+
+function updateHeader(session) {
+  document.getElementById('chat-avatar').textContent = session.initials;
+  document.getElementById('chat-avatar').style.background = session.avatar_color;
+  document.getElementById('chat-title').textContent = session.display_name;
+  document.getElementById('chat-subtitle').textContent = `${session.display_subtitle} · Jadwal ${session.scheduled_label}`;
+  document.getElementById('chat-status').textContent = session.status;
+  document.getElementById('chat-day-banner').textContent = `Sesi dijadwalkan · ${session.scheduled_label}`;
+  const retentionNote = document.getElementById('chat-retention-note');
+  if (retentionNote) {
+    retentionNote.textContent = session.chat_retention_notice || 'Riwayat chat tersedia selama konsultasi berlangsung.';
+  }
+  updateReviewPanel(session);
+  updateComposerState(session);
+  updateSessionTimer(session);
+}
+
+function updateVideoIdentity(session) {
+  const avatarIds = ['video-avatar', 'video-main-avatar'];
+  avatarIds.forEach((id) => {
+    const node = document.getElementById(id);
+    node.textContent = session.initials;
+    node.style.background = session.avatar_color;
+  });
+  document.getElementById('video-title').textContent = session.display_name;
+  document.getElementById('video-main-title').textContent = session.display_name;
+  document.getElementById('video-room-meta').textContent = session.video_call_room
+    ? `Room: ${session.video_call_room}`
+    : 'Room video call belum tersedia.';
+}
+
+function canJoinVideoCall(session) {
+  const status = String(session?.status || '').toLowerCase();
+  return status === 'berjalan' && Boolean(String(session?.video_call_room || '').trim());
+}
+
+function updateVideoButtonState(session) {
+  const button = document.getElementById('start-video');
+  const joinable = canJoinVideoCall(session);
+
+  button.disabled = !joinable;
+  button.title = joinable
+    ? 'Gabung ke video call yang sudah dimulai dokter'
+    : 'Video call baru bisa diikuti setelah dokter memulai sesi konsultasi.';
+}
+
+function renderStars(value, interactive = false) {
+  let html = '';
+  for (let star = 1; star <= 5; star += 1) {
+    const filled = star <= value;
+    const classes = filled ? 'text-amber-400' : 'text-slate-300';
+    if (interactive) {
+      html += `<button type="button" data-rating="${star}" class="review-star cursor-pointer text-2xl ${classes} hover:text-amber-400 transition">${filled ? '?' : '?'}</button>`;
+    } else {
+      html += `<span class="text-2xl ${classes}">${filled ? '?' : '?'}</span>`;
+    }
+  }
+  return html;
+}
+
+function updateReviewPanel(session) {
+  const panel = document.getElementById('review-panel');
+  const stars = document.getElementById('review-stars');
+
+  if (!panel || !stars) {
+    return;
+  }
+
+  const canReview = Boolean(session?.can_review);
+  const existingRating = Number(session?.patient_rating || 0);
+
+  if (!canReview && existingRating <= 0) {
+    panel.classList.add('hidden');
+    stars.innerHTML = '';
+    return;
+  }
+
+  panel.classList.remove('hidden');
+
+  if (existingRating > 0) {
+    stars.innerHTML = `<div class="flex items-center gap-2">${renderStars(existingRating)}<span class="text-sm font-bold text-slate-700 ml-2">${existingRating}/5</span></div>`;
+    return;
+  }
+
+  stars.innerHTML = `<div class="flex items-center gap-2">${renderStars(0, true)}</div>`;
+  stars.querySelectorAll('.review-star').forEach((button) => {
+    button.addEventListener('click', () => submitReview(Number(button.dataset.rating || 0)));
+  });
+}
+
+let sessionTimerInterval = null;
+
+function formatTimeOnly(dateString) {
+  if (!dateString) {
+    return '';
+  }
+
+  const date = new Date(dateString.replace(' ', 'T'));
+  if (Number.isNaN(date.getTime())) {
+    return '';
+  }
+
+  return new Intl.DateTimeFormat('id-ID', {
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+    timeZone: 'Asia/Jakarta'
+  }).format(date);
+}
+
+function formatDurationLabel(totalSeconds) {
+  const safeSeconds = Math.max(0, Number(totalSeconds || 0));
+  const hours = Math.floor(safeSeconds / 3600);
+  const minutes = Math.floor((safeSeconds % 3600) / 60);
+  const seconds = safeSeconds % 60;
+
+  if (hours > 0) {
+    return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+  }
+
+  return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+}
+
+function updateComposerState(session) {
   const input = document.getElementById('msg-input');
-  const text  = input.value.trim();
-  if (!text) return;
+  const sendButton = document.getElementById('send-message');
+  const closed = String(session?.status || '').toLowerCase() === 'selesai';
+  const expired = Boolean(session?.chat_expired);
 
-  const msgs = document.getElementById('chat-messages');
-  const typing = document.getElementById('typing-indicator');
+  if (!input || !sendButton) {
+    return;
+  }
 
-  // Tambah pesan user
-  const myMsg = document.createElement('div');
-  myMsg.className = 'msg-row mine';
-  myMsg.innerHTML = `<div><div class="msg-bubble mine">${escHtml(text)}</div><div class="msg-time" style="text-align:right">${now()}</div></div>`;
-  msgs.insertBefore(myMsg, typing);
-  input.value = '';
-  input.style.height = 'auto';
-  scrollBottom();
-
-  // Simulasi balasan dokter
-  setTimeout(() => {
-    typing.style.display = 'flex';
-    scrollBottom();
-    setTimeout(() => {
-      typing.style.display = 'none';
-      const reply = document.createElement('div');
-      reply.className = 'msg-row';
-      reply.innerHTML = `
-        <div style="width:32px;height:32px;border-radius:8px;background:#1a6bff;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:800;color:#fff;flex-shrink:0">SW</div>
-        <div><div class="msg-bubble theirs">${autoReplies[replyIdx++ % autoReplies.length]}</div><div class="msg-time">${now()}</div></div>`;
-      msgs.insertBefore(reply, typing);
-      scrollBottom();
-    }, 1800);
-  }, 600);
+  input.disabled = closed || expired;
+  sendButton.disabled = closed || expired;
+  input.placeholder = expired
+    ? 'Riwayat chat sudah dihapus setelah 24 jam.'
+    : (closed
+      ? 'Sesi konsultasi sudah selesai.'
+      : 'Tulis pesan untuk dokter...');
 }
 
-function scrollBottom() {
-  const msgs = document.getElementById('chat-messages');
-  msgs.scrollTop = msgs.scrollHeight;
+function updateSessionTimer(session) {
+  const timerEl = document.getElementById('video-timer');
+  const subtitleEl = document.getElementById('video-subtitle');
+  const startedAt = String(session?.video_call_started_at || '').trim();
+  const endedAt = String(session?.video_call_ended_at || '').trim();
+
+  if (!timerEl || !subtitleEl) {
+    return;
+  }
+
+  if (sessionTimerInterval) {
+    clearInterval(sessionTimerInterval);
+    sessionTimerInterval = null;
+  }
+
+  if (!startedAt) {
+    timerEl.style.display = 'none';
+    timerEl.textContent = '00:00';
+    return;
+  }
+
+  const startedDate = new Date(startedAt.replace(' ', 'T'));
+  const endedDate = endedAt ? new Date(endedAt.replace(' ', 'T')) : null;
+  if (Number.isNaN(startedDate.getTime())) {
+    timerEl.style.display = 'none';
+    return;
+  }
+
+  subtitleEl.textContent = `Sesi konsultasi dimulai (${formatTimeOnly(startedAt)} WIB)`;
+  timerEl.style.display = 'inline';
+
+  const paint = () => {
+    const targetDate = endedDate && !Number.isNaN(endedDate.getTime()) ? endedDate : new Date();
+    const diffSeconds = Math.floor((targetDate.getTime() - startedDate.getTime()) / 1000);
+    timerEl.textContent = formatDurationLabel(diffSeconds);
+  };
+
+  paint();
+
+  if (!endedDate || Number.isNaN(endedDate.getTime())) {
+    sessionTimerInterval = setInterval(paint, 1000);
+  }
 }
-function escHtml(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
-function now() { return new Date().toLocaleTimeString('id-ID',{hour:'2-digit',minute:'2-digit'}); }
 
-// Video call
-let vcInterval = null, vcSeconds = 0;
+function renderEmptyState() {
+  const container = document.getElementById('chat-messages');
+  const session = consultationMap[currentSessionId] || {};
+  const empty = document.createElement('div');
+  empty.className = 'chat-empty';
+  empty.id = 'chat-empty-state';
+  empty.innerHTML = `
+    <i class="fa-solid fa-comment-medical"></i>
+    <div>${escapeHtml(session.chat_expired ? (session.chat_retention_notice || 'Riwayat chat konsultasi sudah dihapus.') : 'Belum ada pesan. Mulai percakapan untuk konsultasi dengan dokter.')}</div>
+  `;
+  container.appendChild(empty);
+}
 
-function startVideoCall() {
-  document.getElementById('video-overlay').classList.remove('hidden');
+function removeEmptyState() {
+  const empty = document.getElementById('chat-empty-state');
+  if (empty) {
+    empty.remove();
+  }
+}
+
+function buildMessageRow(message, session) {
+  const isMine = Number(message.sender_id) === Number(MY_USER_ID);
+  const row = document.createElement('div');
+  row.className = `msg-row${isMine ? ' mine' : ''}`;
+  row.dataset.messageId = message.id;
+  row.innerHTML = `
+    ${isMine ? '' : `<div class="msg-mini-avatar" style="background:${session.avatar_color}">${escapeHtml(session.initials)}</div>`}
+      <div class="msg-card">
+      <div class="msg-bubble ${isMine ? 'mine' : 'theirs'}">${linkifySafe(message.body)}</div>
+      <div class="msg-time"${isMine ? ' style="text-align:right"' : ''}>${escapeHtml(message.time)}</div>
+    </div>
+  `;
+  return row;
+}
+
+function appendMessages(messages, replace = false) {
+  const container = document.getElementById('chat-messages');
+  const session = consultationMap[currentSessionId];
+
+  if (replace) {
+    container.innerHTML = `<div class="chat-day-banner" id="chat-day-banner">Sesi dijadwalkan · ${escapeHtml(session.scheduled_label)}</div>`;
+    updateHeader(session);
+  }
+
+  if (!messages.length && replace) {
+    renderEmptyState();
+    return;
+  }
+
+  messages.forEach((message) => {
+    if (container.querySelector(`[data-message-id="${message.id}"]`)) {
+      return;
+    }
+
+    removeEmptyState();
+    container.appendChild(buildMessageRow(message, session));
+    lastMessageId = Math.max(lastMessageId, Number(message.id));
+    session.preview = message.body;
+    session.last_message_label = message.time;
+  });
+
+  updateSidebarSession(session);
+  scrollMessagesToBottom();
+}
+
+async function fetchMessages(reset = false) {
+  const sessionId = currentSessionId;
+  const since = reset ? 0 : lastMessageId;
+
+  try {
+    const response = await fetch(`${BASE_URL}/api/chat/get.php?id_konsultasi=${sessionId}&last_id=${since}`, {
+      credentials: 'same-origin'
+    });
+    const result = await response.json();
+
+    if (!response.ok || result.status !== 'success') {
+      throw new Error(result.message || 'Gagal memuat chat konsultasi.');
+    }
+
+    if (sessionId !== currentSessionId) {
+      return;
+    }
+
+    if (result.data.consultation) {
+      consultationMap[sessionId] = {
+        ...consultationMap[sessionId],
+        ...result.data.consultation
+      };
+      updateHeader(consultationMap[sessionId]);
+      updateSidebarSession(consultationMap[sessionId]);
+      updateVideoIdentity(consultationMap[sessionId]);
+      updateVideoButtonState(consultationMap[sessionId]);
+    }
+
+    if (reset) {
+      lastMessageId = 0;
+      appendMessages(result.data.messages || [], true);
+      return;
+    }
+
+    appendMessages(result.data.messages || []);
+  } catch (error) {
+    console.error(error);
+  }
+}
+
+async function submitReview(rating) {
+  if (!rating || !consultationMap[currentSessionId]?.can_review) {
+    return;
+  }
+
+  try {
+    const response = await fetch(`${BASE_URL}/api/consultation/review.php`, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        consultation_id: currentSessionId,
+        rating
+      })
+    });
+    const result = await response.json();
+
+    if (!response.ok || result.status !== 'success') {
+      throw new Error(result.message || 'Review gagal disimpan.');
+    }
+
+    if (result.data?.consultation) {
+      consultationMap[currentSessionId] = {
+        ...consultationMap[currentSessionId],
+        ...result.data.consultation
+      };
+      updateHeader(consultationMap[currentSessionId]);
+      updateSidebarSession(consultationMap[currentSessionId]);
+    }
+
+    showToast('Review bintang berhasil dikirim.');
+  } catch (error) {
+    showToast(error.message || 'Review gagal disimpan.');
+  }
+}
+
+function setActiveSessionButton() {
+  document.querySelectorAll('.consult-item').forEach((button) => {
+    button.classList.toggle('active', Number(button.dataset.sessionId) === Number(currentSessionId));
+  });
+}
+
+function openSession(sessionId) {
+  if (!consultationMap[sessionId]) {
+    return;
+  }
+
+  if (document.getElementById('video-overlay').classList.contains('active')) {
+    endVideoCall(false);
+  }
+
+  currentSessionId = Number(sessionId);
+  lastMessageId = 0;
+  setActiveSessionButton();
+  updateHeader(consultationMap[currentSessionId]);
+  updateVideoIdentity(consultationMap[currentSessionId]);
+  updateVideoButtonState(consultationMap[currentSessionId]);
+  window.history.replaceState({}, '', `${BASE_URL}/pages/consultation.php?consultation_id=${currentSessionId}`);
+  fetchMessages(true);
+}
+
+async function sendMessage() {
+  const input = document.getElementById('msg-input');
+  const button = document.getElementById('send-message');
+  const text = input.value.trim();
+
+  if (!text) {
+    return;
+  }
+
+  button.disabled = true;
+
+  try {
+    const response = await fetch(`${BASE_URL}/api/chat/send.php`, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        idKonsultasi: currentSessionId,
+        isiPesan: text
+      })
+    });
+    const result = await response.json();
+
+    if (!response.ok || result.status !== 'success') {
+      throw new Error(result.message || 'Pesan gagal dikirim.');
+    }
+
+    appendMessages([result.data]);
+    input.value = '';
+    input.style.height = 'auto';
+  } catch (error) {
+    showToast(error.message || 'Pesan gagal dikirim.');
+  } finally {
+    button.disabled = false;
+  }
+}
+
+function handleChatKey(event) {
+  if (event.key === 'Enter' && !event.shiftKey) {
+    event.preventDefault();
+    sendMessage();
+  }
+}
+
+function autoResize(element) {
+  element.style.height = 'auto';
+  element.style.height = `${Math.min(element.scrollHeight, 140)}px`;
+}
+
+function startPolling() {
+  if (pollTimer) {
+    clearInterval(pollTimer);
+  }
+
+  pollTimer = setInterval(() => fetchMessages(false), 2500);
+}
+
+function getJitsiDomain() {
+  try {
+    return new URL(JITSI_BASE_URL).hostname;
+  } catch (error) {
+    return 'meet.jit.si';
+  }
+}
+
+function setVideoPlaceholder(message, show = true) {
+  const placeholder = document.getElementById('video-placeholder');
+  document.getElementById('video-main-copy').textContent = message;
+  placeholder.classList.toggle('hidden', !show);
+}
+
+function loadJitsiScript() {
+  if (window.JitsiMeetExternalAPI) {
+    return Promise.resolve();
+  }
+
+  if (jitsiScriptPromise) {
+    return jitsiScriptPromise;
+  }
+
+  jitsiScriptPromise = new Promise((resolve, reject) => {
+    const script = document.createElement('script');
+    script.src = `${JITSI_BASE_URL}/external_api.js`;
+    script.async = true;
+    script.onload = () => resolve();
+    script.onerror = () => reject(new Error('Gagal memuat library Jitsi Meet.'));
+    document.head.appendChild(script);
+  });
+
+  return jitsiScriptPromise;
+}
+
+function disposeJitsiApi() {
+  if (jitsiApi) {
+    jitsiApi.dispose();
+    jitsiApi = null;
+  }
+
+  const container = document.getElementById('jitsi-container');
+  container.innerHTML = '';
+}
+
+async function syncVideoSessionState(action = 'start') {
+  const response = await fetch(`${BASE_URL}/api/consultation/video-session.php`, {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      idKonsultasi: currentSessionId,
+      action
+    })
+  });
+  const result = await response.json();
+
+  if (!response.ok || result.status !== 'success') {
+    throw new Error(result.message || 'Status video call gagal diperbarui.');
+  }
+
+  if (result.data?.consultation) {
+    consultationMap[currentSessionId] = {
+      ...consultationMap[currentSessionId],
+      ...result.data.consultation
+    };
+    updateHeader(consultationMap[currentSessionId]);
+    updateSidebarSession(consultationMap[currentSessionId]);
+    updateVideoIdentity(consultationMap[currentSessionId]);
+    updateVideoButtonState(consultationMap[currentSessionId]);
+  }
+}
+
+async function startVideoCall() {
+  const session = consultationMap[currentSessionId];
+  const roomUrl = String(session?.video_call_url || '').trim();
+  const roomName = String(session?.video_call_room || '').trim();
+  const displayName = String('<?= htmlspecialchars($user['name'] ?? $user['nama'] ?? 'CareSync User', ENT_QUOTES) ?>');
+  const email = String('<?= htmlspecialchars($user['email'] ?? '', ENT_QUOTES) ?>');
+  const overlay = document.getElementById('video-overlay');
+
+  if (!canJoinVideoCall(session)) {
+    showToast('Tunggu dokter memulai video call terlebih dahulu.');
+    return;
+  }
+
+  if (!roomUrl || !roomName) {
+    showToast('Room video call belum tersedia untuk sesi ini.');
+    return;
+  }
+
+  overlay.classList.add('active');
   document.body.style.overflow = 'hidden';
-  // Simulasi connected setelah 3 detik
-  setTimeout(() => {
-    document.getElementById('vc-connecting-text').textContent = 'Terhubung dengan dokter';
-    document.getElementById('vc-status').textContent = 'Terhubung';
-    document.getElementById('vc-timer').style.display = 'inline';
-    const remote = document.getElementById('video-remote');
-    remote.style.background = '#1a2a4a';
-    // Mulai timer
-    vcInterval = setInterval(() => {
-      vcSeconds++;
-      const m = String(Math.floor(vcSeconds/60)).padStart(2,'0');
-      const s = String(vcSeconds%60).padStart(2,'0');
-      document.getElementById('vc-timer').textContent = m+':'+s;
-    }, 1000);
-  }, 3000);
+  activeVideoSessionId = currentSessionId;
+  updateVideoIdentity(session);
+  document.getElementById('video-subtitle').textContent = 'Menghubungkan ke sesi konsultasi...';
+  document.getElementById('video-timer').style.display = 'inline';
+  document.getElementById('video-timer').textContent = String(session.status || 'Berjalan');
+  document.getElementById('open-video-external').dataset.url = roomUrl;
+  setVideoPlaceholder('Menyiapkan ruang Jitsi Meet untuk sesi konsultasi ini.', true);
+  disposeJitsiApi();
+
+  try {
+    await loadJitsiScript();
+
+    jitsiApi = new window.JitsiMeetExternalAPI(getJitsiDomain(), {
+      roomName,
+      parentNode: document.getElementById('jitsi-container'),
+      width: '100%',
+      height: '100%',
+      userInfo: {
+        displayName,
+        email
+      },
+      configOverwrite: {
+        prejoinPageEnabled: false,
+        startWithAudioMuted: false,
+        startWithVideoMuted: false
+      },
+      interfaceConfigOverwrite: {
+        DEFAULT_REMOTE_DISPLAY_NAME: 'Peserta Konsultasi',
+        DISABLE_JOIN_LEAVE_NOTIFICATIONS: true
+      }
+    });
+
+    jitsiApi.addListener('videoConferenceJoined', () => {
+      document.getElementById('video-subtitle').textContent = 'Terhubung di halaman konsultasi';
+      document.getElementById('video-timer').style.display = 'inline';
+      document.getElementById('video-timer').textContent = 'Sedang video call';
+      setVideoPlaceholder('Sesi video call aktif di halaman ini.', false);
+    });
+
+    jitsiApi.addListener('readyToClose', () => {
+      endVideoCall(false);
+    });
+  } catch (error) {
+    console.error(error);
+    disposeJitsiApi();
+    setVideoPlaceholder('Jitsi Meet gagal dimuat. Anda tetap bisa membuka link room secara manual.', true);
+    document.getElementById('video-subtitle').textContent = 'Gagal memuat Jitsi Meet';
+    showToast(error.message || 'Jitsi Meet gagal dimuat.');
+  }
+
+  showToast(`Membuka room video call${roomName ? `: ${roomName}` : ''}`);
 }
 
-function endVideoCall() {
-  document.getElementById('video-overlay').classList.add('hidden');
+function endVideoCall(showToastMessage = true) {
+  const overlay = document.getElementById('video-overlay');
+  overlay.classList.remove('active');
   document.body.style.overflow = '';
-  clearInterval(vcInterval);
-  vcSeconds = 0;
-  document.getElementById('vc-timer').style.display = 'none';
-  document.getElementById('vc-status').textContent = 'Menghubungkan...';
-  document.getElementById('vc-connecting-text').textContent = 'Menghubungkan ke dokter...';
-  showToast('Sesi video call selesai', 'info');
+  document.getElementById('video-subtitle').textContent = 'Sesi video call ditutup.';
+  document.getElementById('video-timer').style.display = 'none';
+  document.getElementById('video-timer').textContent = '00:00';
+  setVideoPlaceholder('Sesi video call ditutup.', true);
+  disposeJitsiApi();
+  activeVideoSessionId = null;
+
+  if (showToastMessage) {
+    showToast('Sesi video call ditutup.');
+  }
 }
 
-function toggleMic(btn) { btn.classList.toggle('muted'); }
-function toggleCam(btn) { btn.classList.toggle('muted'); }
+document.querySelectorAll('.consult-item').forEach((button) => {
+  button.addEventListener('click', () => openSession(Number(button.dataset.sessionId)));
+});
 
-function toggleChatPanel() {
-  const panel = document.getElementById('vc-chat-panel');
-  panel.style.display = panel.style.display === 'none' ? 'flex' : 'none';
-}
+document.getElementById('consult-search').addEventListener('input', function () {
+  const keyword = this.value.trim().toLowerCase();
+  document.querySelectorAll('.consult-item').forEach((button) => {
+    const haystack = button.dataset.search || '';
+    button.style.display = haystack.includes(keyword) ? 'flex' : 'none';
+  });
+});
 
-function sendVCMessage() {
-  const input = document.getElementById('vc-msg-input');
-  const text  = input.value.trim();
-  if (!text) return;
-  const msgs = document.getElementById('vc-messages');
-  const div  = document.createElement('div');
-  div.innerHTML = `<div style="text-align:right"><div style="font-size:10px;color:rgba(255,255,255,.4);margin-bottom:2px">Kamu Â· ${now()}</div><div style="background:var(--primary);border-radius:10px 10px 2px 10px;padding:8px 10px;font-size:12px;color:#fff;display:inline-block;max-width:90%">${escHtml(text)}</div></div>`;
-  msgs.appendChild(div);
-  msgs.scrollTop = msgs.scrollHeight;
-  input.value = '';
-}
+document.getElementById('msg-input').addEventListener('keydown', handleChatKey);
+document.getElementById('msg-input').addEventListener('input', function () {
+  autoResize(this);
+});
+document.getElementById('send-message').addEventListener('click', sendMessage);
+document.getElementById('start-video').addEventListener('click', startVideoCall);
+document.getElementById('end-video').addEventListener('click', endVideoCall);
+document.getElementById('open-video-external').addEventListener('click', function () {
+  const roomUrl = this.dataset.url || consultationMap[currentSessionId]?.video_call_url || '';
+  if (!roomUrl) {
+    showToast('Link video call belum tersedia.');
+    return;
+  }
+
+  window.open(roomUrl, '_blank', 'noopener,noreferrer');
+});
+
+setActiveSessionButton();
+updateHeader(consultationMap[currentSessionId]);
+updateVideoIdentity(consultationMap[currentSessionId]);
+updateVideoButtonState(consultationMap[currentSessionId]);
+startPolling();
+scrollMessagesToBottom();
 </script>
+<?php endif; ?>
 
 <?php include __DIR__ . '/../includes/footer.php'; ?>
+
