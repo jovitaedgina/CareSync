@@ -41,11 +41,11 @@
             <div>
                 <h4 class="font-extrabold text-dark mb-5">Perusahaan</h4>
                 <ul class="flex flex-col gap-3 p-0 m-0 list-none text-sm font-bold">
-                    <li><a href="#" class="text-textSoft hover:text-primary smooth-transition no-underline">Tentang Kami</a></li>
-                    <li><a href="#" class="text-textSoft hover:text-primary smooth-transition no-underline">Karir</a></li>
-                    <li><a href="#" class="text-textSoft hover:text-primary smooth-transition no-underline">Mitra Dokter & Apotek</a></li>
-                    <li><a href="#" class="text-textSoft hover:text-primary smooth-transition no-underline">Syarat & Ketentuan</a></li>
-                    <li><a href="#" class="text-textSoft hover:text-primary smooth-transition no-underline">Kebijakan Privasi</a></li>
+                    <li><a href="<?= BASE_URL ?>/pages/tentang-kami.php" class="text-textSoft hover:text-primary smooth-transition no-underline">Tentang Kami</a></li>
+                    <li><a href="<?= BASE_URL ?>/pages/karir.php" class="text-textSoft hover:text-primary smooth-transition no-underline">Karir</a></li>
+                    <li><a href="<?= BASE_URL ?>/pages/mitra.php" class="text-textSoft hover:text-primary smooth-transition no-underline">Mitra Dokter & Apotek</a></li>
+                    <li><a href="<?= BASE_URL ?>/pages/syarat-ketentuan.php" class="text-textSoft hover:text-primary smooth-transition no-underline">Syarat & Ketentuan</a></li>
+                    <li><a href="<?= BASE_URL ?>/pages/kebijakan-privasi.php" class="text-textSoft hover:text-primary smooth-transition no-underline">Kebijakan Privasi</a></li>
                 </ul>
             </div>
 

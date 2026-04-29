@@ -1,5 +1,6 @@
 <?php
 require_once __DIR__ . '/../includes/config.php';
+requireLogin();
 $pageTitle   = 'Artikel Kesehatan — CareSync';
 $currentPage = 'dashboard';
 

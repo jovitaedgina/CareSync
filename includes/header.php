@@ -6,7 +6,7 @@ require_once __DIR__ . '/marketplace_helpers.php';
 $headerUser = currentUser();
 $headerUserName = htmlspecialchars($headerUser['name'] ?? $headerUser['nama'] ?? 'Pengguna');
 $headerUserRole = $headerUser['role'] ?? 'user';
-$headerUserRoleLabel = $headerUserRole === 'user' ? 'Pasien' : ucfirst($headerUserRole);
+$headerUserRoleLabel = in_array(strtolower((string) $headerUserRole), ['user', 'pasien'], true) ? 'Pasien' : ucfirst($headerUserRole);
 $headerCartCount = getMarketplaceCartCount();
 $headerUserPhoto = '';
 
