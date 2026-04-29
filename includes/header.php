@@ -1,10 +1,30 @@
 <?php
 // includes/header.php
 require_once __DIR__ . '/config.php';
+require_once __DIR__ . '/marketplace_helpers.php';
+
+$headerUser = currentUser();
+$headerUserName = htmlspecialchars($headerUser['name'] ?? $headerUser['nama'] ?? 'Pengguna');
+$headerUserRole = $headerUser['role'] ?? 'user';
+$headerUserRoleLabel = $headerUserRole === 'user' ? 'Pasien' : ucfirst($headerUserRole);
+$headerCartCount = getMarketplaceCartCount();
+$headerUserPhoto = '';
+
+if (isLoggedIn()) {
+    ensureUserProfilePhotoSchema($pdo);
+    $headerPhotoStmt = $pdo->prepare('SELECT profile_photo FROM users WHERE id = :id LIMIT 1');
+    $headerPhotoStmt->execute([':id' => (int) ($headerUser['id'] ?? 0)]);
+    $headerUserPhoto = getUserProfilePhotoUrl((string) $headerPhotoStmt->fetchColumn());
+}
 ?>
 <!DOCTYPE html>
 <html lang="id">
 <head>
+    <?php if (isLoggedIn()): ?>
+    <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate, max-age=0">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
+    <?php endif; ?>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title><?= (isset($pageTitle)) ? $pageTitle : APP_NAME . ' — Koneksi Kesehatan Terpadu'; ?></title>
@@ -51,6 +71,16 @@ require_once __DIR__ . '/config.php';
         .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
     </style>
     
+    <?php if (isLoggedIn()): ?>
+    <script>
+        window.onpageshow = function(event) {
+            if (event.persisted) {
+                window.location.reload();
+            }
+        };
+    </script>
+    <?php endif; ?>
+
     <?= (isset($extraHead)) ? $extraHead : ''; ?>
 </head>
 <body class="bg-slate-50 text-dark antialiased">
@@ -97,7 +127,7 @@ require_once __DIR__ . '/config.php';
                 
                 <a href="<?= BASE_URL ?>/pages/cart.php" class="relative w-11 h-11 flex items-center justify-center bg-slate-50 rounded-xl text-slate-500 hover:bg-slate-100 hover:text-primary smooth-transition no-underline border border-slate-200">
                     <i class="fa-solid fa-cart-shopping"></i>
-                    <span id="cart-count" class="absolute -top-1.5 -right-1.5 bg-accent text-white text-[10px] font-bold w-5 h-5 flex items-center justify-center rounded-full hidden">0</span>
+                    <span id="cart-count" class="absolute -top-1.5 -right-1.5 bg-accent text-white text-[10px] font-bold w-5 h-5 flex items-center justify-center rounded-full <?= $headerCartCount > 0 ? '' : 'hidden' ?>"><?= $headerCartCount ?></span>
                 </a>
 
                 <div class="relative" x-data="{ openNotif: false }" @click.away="openNotif = false">
@@ -144,10 +174,16 @@ require_once __DIR__ . '/config.php';
 
                 <div class="hidden md:block relative" x-data="{ open: false }" @click.away="open = false">
                     <button @click="open = !open" class="flex items-center gap-3 p-1.5 pr-3 bg-slate-50 rounded-full border border-slate-200 hover:bg-slate-100 smooth-transition cursor-pointer">
-                        <img src="https://images.unsplash.com/photo-1522075469751-3a6694fb2f61?ixlib=rb-4.0.3&auto=format&fit=crop&w=80&q=80" alt="User" class="w-9 h-9 rounded-full object-cover border-2 border-white shadow-sm">
+                        <?php if ($headerUserPhoto !== ''): ?>
+                        <img src="<?= htmlspecialchars($headerUserPhoto) ?>" alt="Foto Profil" class="w-9 h-9 rounded-full object-cover border-2 border-white shadow-sm">
+                        <?php else: ?>
+                        <div class="w-9 h-9 rounded-full bg-primary text-white border-2 border-white shadow-sm flex items-center justify-center text-xs font-extrabold">
+                            <?= htmlspecialchars(getMarketplaceProfileInitials((string) ($headerUser['name'] ?? $headerUser['nama'] ?? 'Pengguna'))) ?>
+                        </div>
+                        <?php endif; ?>
                         <div class="text-left">
-                            <span class="block text-xs font-bold text-dark m-0 leading-tight">Jovita E.</span>
-                            <span class="block text-[11px] font-medium text-textSoft m-0">Pasien</span>
+                            <span class="block text-xs font-bold text-dark m-0 leading-tight"><?= $headerUserName ?></span>
+                            <span class="block text-[11px] font-medium text-textSoft m-0"><?= htmlspecialchars($headerUserRoleLabel) ?></span>
                         </div>
                         <i class="fa-solid fa-chevron-down text-xs text-slate-400 ml-1 smooth-transition" :class="open ? 'rotate-180' : ''"></i>
                     </button>
@@ -155,7 +191,12 @@ require_once __DIR__ . '/config.php';
                         <a href="<?= BASE_URL ?>/pages/profile.php" class="flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-semibold text-slate-600 hover:bg-slate-50 hover:text-dark no-underline smooth-transition">
                             <i class="fa-solid fa-user-circle w-4"></i> Profil Saya
                         </a>
-                        <a href="<?= BASE_URL ?>/pages/login.php" class="flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-semibold text-red-600 hover:bg-red-50 no-underline smooth-transition">
+                        <?php if (userCanManageMarketplace($headerUser)): ?>
+                        <a href="<?= BASE_URL ?>/pages/pharmacy_management.php" class="flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-semibold text-slate-600 hover:bg-slate-50 hover:text-dark no-underline smooth-transition">
+                            <i class="fa-solid fa-warehouse w-4"></i> Manajemen Apotek
+                        </a>
+                        <?php endif; ?>
+                        <a href="<?= BASE_URL ?>/pages/logout.php" class="flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-semibold text-red-600 hover:bg-red-50 no-underline smooth-transition">
                             <i class="fa-solid fa-right-from-bracket w-4"></i> Keluar
                         </a>
                     </div>
