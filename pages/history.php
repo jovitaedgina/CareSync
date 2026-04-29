@@ -1,9 +1,62 @@
 <?php
 require_once __DIR__ . '/../includes/config.php';
-$pageTitle   = 'Riwayat Konsultasi — CareSync';
+require_once __DIR__ . '/../includes/booking_helpers.php';
+
+requireLogin();
+
+$pageTitle = 'Riwayat Konsultasi';
 $currentPage = 'history';
 
-// Suntikkan Tailwind CSS dan Konfigurasi Tema CareSync
+$user = currentUser();
+$userId = (int) ($user['id'] ?? 0);
+$patientId = ensurePatientProfile($pdo, $userId);
+syncConsultationStatuses($pdo);
+$doctorMap = [];
+
+foreach (getBookingDoctors($pdo) as $doctor) {
+    $doctorMap[$doctor['id']] = $doctor;
+}
+
+$stmt = $pdo->prepare(
+    'SELECT sk.idKonsultasi, sk.tanggal, sk.status, d.idDokter, d.spesialisasi, d.nomorSTR, u.nama AS doctor_name
+     FROM SesiKonsultasi sk
+     INNER JOIN Dokter d ON d.idDokter = sk.idDokter
+     INNER JOIN users u ON u.id = d.id_user
+     WHERE sk.idPasien = :idPasien
+     ORDER BY sk.tanggal DESC'
+);
+$stmt->execute([':idPasien' => $patientId]);
+
+$colorClasses = ['bg-blue-500', 'bg-emerald-500', 'bg-amber-500', 'bg-violet-500', 'bg-rose-500'];
+$histories = [];
+
+foreach ($stmt->fetchAll() as $index => $row) {
+    $doctorId = (int) $row['iddokter'];
+    $doctor = $doctorMap[$doctorId] ?? null;
+    $status = $row['status'];
+    $statusKey = $status === 'Selesai' ? 'selesai' : 'aktif';
+    $initials = strtoupper(substr(preg_replace('/[^A-Za-z]/', '', $row['doctor_name']), 0, 2) ?: 'DR');
+
+    $histories[] = [
+        'id' => (int) $row['idkonsultasi'],
+        'doctor_name' => $row['doctor_name'],
+        'specialization' => $row['spesialisasi'],
+        'date_iso' => $row['tanggal'],
+        'date_label' => date('d M Y H:i', strtotime($row['tanggal'])),
+        'status' => $status,
+        'status_key' => $statusKey,
+        'license' => $row['nomorstr'],
+        'fee' => $doctor['fee'] ?? 0,
+        'image' => $doctor['image'] ?? '',
+        'rating' => $doctor['rating'] ?? '4.8',
+        'patients' => $doctor['patients'] ?? '100+',
+        'initials' => $initials,
+        'color' => $colorClasses[$index % count($colorClasses)],
+    ];
+}
+
+$firstHistory = $histories[0] ?? null;
+
 $extraHead = '
 <script src="https://cdn.tailwindcss.com"></script>
 <script>
@@ -12,12 +65,15 @@ $extraHead = '
             extend: {
                 fontFamily: { sans: [\'"Plus Jakarta Sans"\', \'sans-serif\'] },
                 colors: {
-                    primary: \'#1D4ED8\', primaryLight: \'#EFF6FF\',
-                    accent: \'#10B981\', dark: \'#0F172A\', textSoft: \'#64748B\',
-                    warning: \'#F59E0B\', warningLight: \'#FEF3C7\',
-                    danger: \'#EF4444\', dangerLight: \'#FEE2E2\'
+                    primary: \'#1D4ED8\',
+                    primaryLight: \'#EFF6FF\',
+                    accent: \'#10B981\',
+                    dark: \'#0F172A\',
+                    textSoft: \'#64748B\'
                 },
-                boxShadow: { \'floating\': \'0 20px 40px -15px rgba(29, 78, 216, 0.15)\' }
+                boxShadow: {
+                    floating: \'0 20px 40px -15px rgba(29, 78, 216, 0.15)\'
+                }
             }
         }
     }
@@ -25,7 +81,6 @@ $extraHead = '
 <style>
     body { background-color: #F8FAFC; margin: 0; }
     .smooth-transition { transition: all 0.3s ease-in-out; }
-    /* Sembunyikan scrollbar untuk UI yang lebih bersih */
     .no-scrollbar::-webkit-scrollbar { display: none; }
     .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
 </style>
@@ -36,255 +91,192 @@ include __DIR__ . '/../includes/header.php';
 
 <div class="bg-slate-50 min-h-screen py-10" style="font-family: 'Plus Jakarta Sans', sans-serif;">
     <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        
         <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-8">
             <div>
-                <h1 class="text-3xl font-extrabold text-slate-900 m-0">Rekam Medis</h1>
-                <p class="text-slate-500 font-medium mt-2 m-0">Jovita Edgina · Pasien Umum · #MED-8819</p>
+                <h1 class="text-3xl font-extrabold text-slate-900 m-0">Riwayat Booking Konsultasi</h1>
+                <p class="text-slate-500 font-medium mt-2 m-0"><?= htmlspecialchars($user['name'] ?? 'Pasien CareSync') ?> | Total booking <?= count($histories) ?></p>
             </div>
-            <button onclick="window.print()" class="bg-white border border-slate-200 text-slate-600 hover:text-primary hover:border-primary px-5 py-2.5 rounded-xl font-bold text-sm shadow-sm flex items-center gap-2 smooth-transition cursor-pointer active:scale-95">
-                <i class="fa-solid fa-print"></i> Simpan PDF
-            </button>
+            <a href="<?= BASE_URL ?>/pages/booking.php" class="bg-primary text-white hover:bg-blue-800 px-5 py-3 rounded-xl font-bold text-sm shadow-md flex items-center gap-2 smooth-transition no-underline">
+                <i class="fa-solid fa-calendar-plus"></i> Booking Baru
+            </a>
         </div>
 
-        <div class="flex flex-col lg:flex-row gap-8 items-start">
-            
-            <div class="w-full lg:w-3/5 xl:w-2/3">
-                
+        <?php if (!$histories): ?>
+        <div class="bg-white border border-dashed border-slate-200 rounded-[2rem] p-12 text-center shadow-sm">
+            <div class="w-20 h-20 rounded-full bg-primaryLight text-primary flex items-center justify-center mx-auto mb-5 text-3xl">
+                <i class="fa-solid fa-calendar-check"></i>
+            </div>
+            <h2 class="text-2xl font-extrabold text-slate-900 m-0 mb-2">Belum ada booking konsultasi</h2>
+            <p class="text-slate-500 font-medium max-w-lg mx-auto m-0 mb-6">Saat user memilih dokter, spesialisasi, tanggal, dan slot di modul booking, data konsultasi akan otomatis muncul di halaman ini.</p>
+            <a href="<?= BASE_URL ?>/pages/booking.php" class="inline-flex items-center gap-2 bg-primary text-white px-6 py-3 rounded-xl font-bold shadow-md hover:bg-blue-800 smooth-transition no-underline">
+                <i class="fa-solid fa-stethoscope"></i> Mulai Booking
+            </a>
+        </div>
+        <?php else: ?>
+        <div class="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_360px] gap-8 items-start">
+            <div>
                 <div class="flex overflow-x-auto no-scrollbar gap-2 mb-6 border-b border-slate-200 pb-2">
-                    <button class="filter-btn active whitespace-nowrap px-4 py-2 rounded-full text-sm font-bold bg-dark text-white smooth-transition cursor-pointer border-none" onclick="filterHistory(this,'all')">Semua</button>
-                    <button class="filter-btn whitespace-nowrap px-4 py-2 rounded-full text-sm font-bold bg-transparent text-slate-500 hover:text-dark smooth-transition cursor-pointer border-none" onclick="filterHistory(this,'selesai')">Selesai</button>
-                    <button class="filter-btn whitespace-nowrap px-4 py-2 rounded-full text-sm font-bold bg-transparent text-slate-500 hover:text-dark smooth-transition cursor-pointer border-none" onclick="filterHistory(this,'aktif')">Aktif</button>
-                    <button class="filter-btn whitespace-nowrap px-4 py-2 rounded-full text-sm font-bold bg-transparent text-slate-500 hover:text-dark smooth-transition cursor-pointer border-none" onclick="filterHistory(this,'resep')">Ada Resep</button>
+                    <button class="filter-btn active whitespace-nowrap px-4 py-2 rounded-full text-sm font-bold bg-dark text-white smooth-transition cursor-pointer border-none" data-filter="all">Semua</button>
+                    <button class="filter-btn whitespace-nowrap px-4 py-2 rounded-full text-sm font-bold bg-transparent text-slate-500 hover:text-dark smooth-transition cursor-pointer border-none" data-filter="aktif">Aktif</button>
+                    <button class="filter-btn whitespace-nowrap px-4 py-2 rounded-full text-sm font-bold bg-transparent text-slate-500 hover:text-dark smooth-transition cursor-pointer border-none" data-filter="selesai">Selesai</button>
                 </div>
 
                 <div id="history-list" class="flex flex-col gap-4">
-                    <?php
-                    $histories = [
-                        [1, 'dr. Susanti Wulandari, Sp.KK', 'Spesialis Kulit & Kelamin', '24 Nov 2024', 'selesai', 'Jerawat meradang dan gatal di pipi kanan', 'Acne Vulgaris Grade II', true,  'SW', 'bg-blue-500'],
-                        [2, 'dr. Budi Santoso, Sp.M',        'Spesialis Mata',            '15 Okt 2024', 'selesai', 'Mata merah dan gatal sejak 3 hari',      'Konjungtivitis Alergi',  false, 'BS', 'bg-teal-500'],
-                        [3, 'dr. Fenny Nurmahdi',             'Dokter Umum',               '2 Sep 2024',  'selesai', 'Demam tinggi dan batuk kering',           'ISPA',                   true,  'FN', 'bg-purple-500'],
-                        [4, 'dr. Ika Syafitri, Sp.PD',        'Penyakit Dalam',            '10 Agu 2024', 'selesai', 'Kontrol rutin tekanan darah',             'Hipertensi Stage 1',     true,  'IS', 'bg-amber-500'],
-                    ];
-                    foreach ($histories as $i => [$id,$name,$spec,$date,$status,$complaint,$diagnosis,$hasResep,$init,$colBg]):
-                        $isActive = ($i === 0);
-                    ?>
-                    <div class="history-card bg-white p-5 rounded-2xl border <?= $isActive ? 'border-primary bg-primaryLight' : 'border-slate-200' ?> hover:border-primary cursor-pointer smooth-transition flex gap-4 items-start group" 
-                         data-status="<?= $status ?>" data-resep="<?= $hasResep ? '1' : '0' ?>"
-                         onclick="selectHistory(this, <?= $id ?>)">
-                        
-                        <div class="w-12 h-12 rounded-xl <?= $colBg ?> flex items-center justify-center text-sm font-extrabold text-white flex-shrink-0 shadow-sm group-hover:scale-105 smooth-transition">
-                            <?= $init ?>
+                    <?php foreach ($histories as $index => $history): ?>
+                    <?php $isActive = $index === 0; ?>
+                    <article
+                        class="history-card bg-white p-5 rounded-2xl border <?= $isActive ? 'border-primary bg-primaryLight' : 'border-slate-200' ?> hover:border-primary cursor-pointer smooth-transition flex gap-4 items-start group"
+                        data-status="<?= htmlspecialchars($history['status_key']) ?>"
+                        data-id="<?= $history['id'] ?>"
+                        data-doctor="<?= htmlspecialchars($history['doctor_name']) ?>"
+                        data-specialization="<?= htmlspecialchars($history['specialization']) ?>"
+                        data-date="<?= htmlspecialchars($history['date_label']) ?>"
+                        data-status-label="<?= htmlspecialchars($history['status']) ?>"
+                        data-license="<?= htmlspecialchars($history['license']) ?>"
+                        data-fee="<?= $history['fee'] ?>"
+                        data-rating="<?= htmlspecialchars($history['rating']) ?>"
+                        data-patients="<?= htmlspecialchars($history['patients']) ?>"
+                        data-image="<?= htmlspecialchars($history['image']) ?>">
+
+                        <div class="w-12 h-12 rounded-xl <?= $history['color'] ?> flex items-center justify-center text-sm font-extrabold text-white flex-shrink-0 shadow-sm group-hover:scale-105 smooth-transition">
+                            <?= htmlspecialchars($history['initials']) ?>
                         </div>
-                        
+
                         <div class="flex-1 min-w-0">
                             <div class="flex justify-between items-start gap-2 mb-1">
-                                <h4 class="font-extrabold text-slate-900 text-[15px] m-0 truncate"><?= $name ?></h4>
-                                <span class="text-[11px] font-semibold text-slate-400 whitespace-nowrap"><?= $date ?></span>
+                                <h4 class="font-extrabold text-slate-900 text-[15px] m-0 truncate"><?= htmlspecialchars($history['doctor_name']) ?></h4>
+                                <span class="text-[11px] font-semibold text-slate-400 whitespace-nowrap"><?= htmlspecialchars($history['date_label']) ?></span>
                             </div>
-                            <div class="text-xs font-semibold text-primary mb-3"><?= $spec ?></div>
-                            <div class="text-sm text-slate-600 mb-3 truncate">Keluhan: <span class="font-medium"><?= $complaint ?></span></div>
-                            
+                            <div class="text-xs font-semibold text-primary mb-3"><?= htmlspecialchars($history['specialization']) ?></div>
+
                             <div class="flex flex-wrap gap-2 items-center">
+                                <span class="text-[10px] font-bold px-2.5 py-1 rounded-md border <?= $history['status'] === 'Selesai' ? 'bg-emerald-50 text-emerald-600 border-emerald-200' : 'bg-amber-50 text-amber-600 border-amber-200' ?>">
+                                    <i class="fa-solid fa-calendar-check mr-1"></i> <?= htmlspecialchars($history['status']) ?>
+                                </span>
                                 <span class="bg-slate-100 text-slate-600 text-[10px] font-bold px-2.5 py-1 rounded-md border border-slate-200">
-                                    <i class="fa-solid fa-stethoscope mr-1"></i> <?= $diagnosis ?>
+                                    <i class="fa-solid fa-wallet mr-1"></i> <?= 'Rp ' . number_format($history['fee'], 0, ',', '.') ?>
                                 </span>
-                                <?php if ($hasResep): ?>
-                                <span class="bg-emerald-50 text-emerald-600 border border-emerald-200 text-[10px] font-bold px-2.5 py-1 rounded-md">
-                                    <i class="fa-solid fa-pills mr-1"></i> Ada Resep
-                                </span>
-                                <?php endif; ?>
                             </div>
                         </div>
-                    </div>
+                    </article>
                     <?php endforeach; ?>
                 </div>
             </div>
 
-            <div class="w-full lg:w-2/5 xl:w-1/3 lg:sticky lg:top-28">
+            <aside class="lg:sticky lg:top-28">
                 <div class="bg-white rounded-[2rem] border border-slate-200 shadow-sm overflow-hidden">
-                    
-                    <div class="bg-gradient-to-br from-primary to-blue-400 p-6 flex gap-4 items-center relative overflow-hidden">
-                        <i class="fa-solid fa-heart-pulse text-white/10 text-6xl absolute -right-2 -bottom-2"></i>
-                        <div class="w-14 h-14 rounded-2xl bg-white/20 backdrop-blur-sm border border-white/30 flex items-center justify-center text-xl font-extrabold text-white flex-shrink-0 shadow-inner z-10">
-                            JE
-                        </div>
-                        <div class="relative z-10 text-white">
-                            <h3 class="font-extrabold text-lg m-0 mb-0.5">Jovita Edgina</h3>
-                            <p class="text-xs text-blue-100 m-0 mb-2 font-medium">Pasien Umum · #MED-8819</p>
-                            <div class="flex gap-3 text-[11px] font-semibold text-white/80">
-                                <span class="flex items-center gap-1"><i class="fa-solid fa-cake-candles"></i> 20 Thn</span>
-                                <span class="flex items-center gap-1"><i class="fa-solid fa-venus"></i> Perempuan</span>
-                            </div>
+                    <div class="bg-gradient-to-br from-primary to-blue-400 p-6 relative overflow-hidden">
+                        <i class="fa-solid fa-file-waveform text-white/10 text-6xl absolute -right-2 -bottom-2"></i>
+                        <div class="relative z-10">
+                            <p class="text-[11px] font-bold uppercase tracking-wider text-blue-100 m-0 mb-2">Detail Booking</p>
+                            <h3 id="detail-doctor" class="font-extrabold text-xl text-white m-0"><?= htmlspecialchars($firstHistory['doctor_name']) ?></h3>
+                            <p id="detail-specialization" class="text-sm text-blue-100 font-semibold m-0 mt-1"><?= htmlspecialchars($firstHistory['specialization']) ?></p>
                         </div>
                     </div>
 
-                    <div class="p-5 border-b border-slate-100">
-                        <div class="grid grid-cols-3 gap-3 mb-5">
-                            <div class="bg-slate-50 rounded-xl p-3 text-center border border-slate-100">
-                                <div class="text-lg mb-1">🫀</div>
-                                <div class="text-sm font-extrabold text-slate-900">120/80</div>
-                                <div class="text-[9px] font-bold text-slate-400 uppercase tracking-wider mt-1">Tekanan Darah</div>
+                    <div class="p-6 space-y-4">
+                        <div class="grid grid-cols-2 gap-3">
+                            <div class="bg-slate-50 rounded-2xl p-4 border border-slate-100">
+                                <div class="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">Tanggal</div>
+                                <div id="detail-date" class="text-sm font-extrabold text-slate-900"><?= htmlspecialchars($firstHistory['date_label']) ?></div>
                             </div>
-                            <div class="bg-slate-50 rounded-xl p-3 text-center border border-slate-100">
-                                <div class="text-lg mb-1">🩸</div>
-                                <div class="text-sm font-extrabold text-slate-900">95 <span class="text-[10px]">mg/dL</span></div>
-                                <div class="text-[9px] font-bold text-slate-400 uppercase tracking-wider mt-1">Gula Darah</div>
+                            <div class="bg-slate-50 rounded-2xl p-4 border border-slate-100">
+                                <div class="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">Status</div>
+                                <div id="detail-status" class="text-sm font-extrabold text-primary"><?= htmlspecialchars($firstHistory['status']) ?></div>
                             </div>
-                            <div class="bg-slate-50 rounded-xl p-3 text-center border border-slate-100">
-                                <div class="text-lg mb-1">⚡</div>
-                                <div class="text-sm font-extrabold text-slate-900">180</div>
-                                <div class="text-[9px] font-bold text-slate-400 uppercase tracking-wider mt-1">Kolesterol</div>
+                            <div class="bg-slate-50 rounded-2xl p-4 border border-slate-100">
+                                <div class="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">Biaya</div>
+                                <div id="detail-fee" class="text-sm font-extrabold text-slate-900"><?= 'Rp ' . number_format($firstHistory['fee'], 0, ',', '.') ?></div>
+                            </div>
+                            <div class="bg-slate-50 rounded-2xl p-4 border border-slate-100">
+                                <div class="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">Konsultasi ID</div>
+                                <div id="detail-id" class="text-sm font-extrabold text-slate-900">#CS-<?= $firstHistory['id'] ?></div>
                             </div>
                         </div>
 
-                        <div class="flex items-center gap-2 bg-warningLight text-warning px-3 py-2.5 rounded-xl text-xs font-bold mb-2">
-                            <i class="fa-solid fa-triangle-exclamation"></i>
-                            <span>Alergi Aspirin</span>
-                            <span class="ml-auto bg-warning/20 text-warning px-2 py-0.5 rounded text-[9px] uppercase tracking-wider">Tinggi</span>
-                        </div>
-                        <div class="flex items-center gap-2 bg-dangerLight text-danger px-3 py-2.5 rounded-xl text-xs font-bold">
-                            <i class="fa-solid fa-notes-medical"></i>
-                            <span>Riwayat Asma</span>
-                            <span class="ml-auto bg-danger/20 text-danger px-2 py-0.5 rounded text-[9px] uppercase tracking-wider">Sedang</span>
-                        </div>
-                    </div>
-
-                    <div class="flex border-b border-slate-100 bg-slate-50/50">
-                        <button class="detail-tab flex-1 py-3.5 text-center text-xs font-extrabold cursor-pointer border-b-2 border-primary text-primary smooth-transition bg-transparent" onclick="switchTab(this,'tab-riwayat')">Riwayat</button>
-                        <button class="detail-tab flex-1 py-3.5 text-center text-xs font-extrabold cursor-pointer border-b-2 border-transparent text-slate-400 hover:text-slate-700 smooth-transition bg-transparent" onclick="switchTab(this,'tab-resep')">Resep</button>
-                        <button class="detail-tab flex-1 py-3.5 text-center text-xs font-extrabold cursor-pointer border-b-2 border-transparent text-slate-400 hover:text-slate-700 smooth-transition bg-transparent" onclick="switchTab(this,'tab-lab')">Hasil Lab</button>
-                    </div>
-
-                    <div class="p-6 h-[400px] overflow-y-auto no-scrollbar">
-
-                        <div class="detail-section block" id="tab-riwayat">
-                            <?php
-                            $visits = [
-                                ['Konsultasi Kulit Wajah', '24 Nov 2024', 'dr. Susanti Wulandari', 'Jerawat meradang dan gatal di pipi kanan', 'Acne Vulgaris Grade II'],
-                                ['Pemeriksaan Umum (Flu)', '15 Okt 2024', 'dr. Budi Santoso',      'Demam dan batuk 3 hari',                   'ISPA Ringan'],
-                            ];
-                            foreach ($visits as $idx => [$title,$date,$doc,$keluhan,$diag]):
-                            ?>
-                            <div class="relative pl-6 pb-6 <?= $idx === count($visits)-1 ? '' : 'border-l-2 border-slate-100' ?> ml-2">
-                                <div class="absolute w-3 h-3 bg-primary rounded-full -left-[7px] top-1 ring-4 ring-white"></div>
-                                <div class="flex justify-between items-start mb-1">
-                                    <h5 class="font-extrabold text-sm text-slate-900 m-0"><?= $title ?></h5>
+                        <div class="bg-primaryLight rounded-2xl p-5 border border-blue-100">
+                            <div class="flex items-center gap-3 mb-3">
+                                <div class="w-11 h-11 rounded-2xl bg-white text-primary flex items-center justify-center shadow-sm">
+                                    <i class="fa-solid fa-id-card"></i>
                                 </div>
-                                <div class="text-[11px] font-semibold text-slate-400 mb-3"><?= $date ?> · <?= $doc ?></div>
-                                <div class="bg-slate-50 rounded-xl p-3 border border-slate-100">
-                                    <div class="text-xs text-slate-600 mb-1"><span class="font-bold text-slate-700">Keluhan:</span> <?= $keluhan ?></div>
-                                    <div class="text-xs text-primary"><span class="font-bold">Diagnosis:</span> <?= $diag ?></div>
+                                <div>
+                                    <div class="text-xs font-bold uppercase tracking-wider text-slate-400">Nomor STR</div>
+                                    <div id="detail-license" class="text-sm font-extrabold text-slate-900"><?= htmlspecialchars($firstHistory['license']) ?></div>
                                 </div>
                             </div>
-                            <?php endforeach; ?>
+                            <div class="text-sm text-slate-600 leading-relaxed">
+                                Status booking akan berubah otomatis saat sesi konsultasi dimulai atau selesai. Slot yang sudah dipesan tidak akan ditawarkan lagi ke user lain.
+                            </div>
                         </div>
 
-                        <div class="detail-section hidden" id="tab-resep">
-                            <div class="border-2 border-dashed border-slate-200 rounded-2xl p-5 relative bg-white">
-                                <i class="fa-solid fa-prescription absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-[80px] text-slate-50 opacity-50 pointer-events-none"></i>
-                                
-                                <div class="flex justify-between items-start mb-4 pb-4 border-b border-slate-100 relative z-10">
-                                    <div>
-                                        <div class="font-extrabold text-primary text-sm tracking-tight">CareSync E-Rx</div>
-                                        <div class="text-[9px] font-bold text-slate-400 mt-0.5">RP/CSYNC/012345</div>
-                                    </div>
-                                    <div class="text-right">
-                                        <div class="font-bold text-xs text-slate-800">dr. Susanti Wulandari</div>
-                                        <div class="text-[9px] font-medium text-slate-400 mt-0.5">Jakarta, 24 Nov 2024</div>
-                                    </div>
-                                </div>
-                                
-                                <div class="text-[10px] font-bold text-slate-500 mb-4 relative z-10 uppercase tracking-wider">
-                                    Untuk: Jovita Edgina (20 Thn)
-                                </div>
-                                
-                                <div class="relative z-10 space-y-3">
-                                    <div class="pb-3 border-b border-slate-50">
-                                        <div class="font-extrabold text-sm text-slate-800"><span class="text-primary italic mr-1">R/</span> Clindamycin 300mg Caps</div>
-                                        <div class="text-[11px] font-medium text-slate-500 mt-1"><i class="fa-solid fa-arrow-turn-up fa-rotate-90 text-slate-300 mr-1"></i> No. XV · 1 dd 1 caps (malam hari)</div>
-                                    </div>
-                                    <div class="pb-3 border-b border-slate-50">
-                                        <div class="font-extrabold text-sm text-slate-800"><span class="text-primary italic mr-1">R/</span> Benzoilac 5% Gel Tube No. 1</div>
-                                        <div class="text-[11px] font-medium text-slate-500 mt-1"><i class="fa-solid fa-arrow-turn-up fa-rotate-90 text-slate-300 mr-1"></i> S u.e (Oles tipis malam hari)</div>
-                                    </div>
-                                </div>
-                                
-                                <div class="mt-6 pt-4 border-t border-slate-100 text-[10px] font-bold text-slate-400 relative z-10 text-center italic">
-                                    "Dokumen ini valid dan diterbitkan secara digital"
-                                </div>
+                        <div class="grid grid-cols-2 gap-3">
+                            <div class="bg-slate-50 rounded-2xl p-4 border border-slate-100">
+                                <div class="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">Rating</div>
+                                <div id="detail-rating" class="text-sm font-extrabold text-slate-900"><?= htmlspecialchars($firstHistory['rating']) ?></div>
                             </div>
+                            <div class="bg-slate-50 rounded-2xl p-4 border border-slate-100">
+                                <div class="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">Pasien</div>
+                                <div id="detail-patients" class="text-sm font-extrabold text-slate-900"><?= htmlspecialchars($firstHistory['patients']) ?></div>
+                            </div>
+                        </div>
 
-                            <a href="<?= BASE_URL ?>/pages/marketplace.php" class="mt-6 w-full bg-primary text-white border-none hover:bg-blue-800 py-3.5 rounded-xl font-bold shadow-md shadow-blue-200 active:scale-95 smooth-transition flex items-center justify-center gap-2 cursor-pointer text-sm no-underline">
-                                <i class="fa-solid fa-cart-shopping"></i> Tebus Resep Ini
+                        <div class="flex flex-col gap-3">
+                            <a id="detail-link" href="<?= BASE_URL ?>/pages/consultation.php?consultation_id=<?= $firstHistory['id'] ?>" class="w-full bg-primary text-white hover:bg-blue-800 py-3.5 rounded-xl font-bold shadow-md text-center no-underline smooth-transition">
+                                Buka Ruang Konsultasi
+                            </a>
+                            <a href="<?= BASE_URL ?>/pages/booking.php" class="w-full bg-white border border-slate-200 text-slate-700 hover:border-primary hover:text-primary py-3.5 rounded-xl font-bold text-center no-underline smooth-transition">
+                                Booking Slot Lain
                             </a>
                         </div>
-
-                        <div class="detail-section hidden" id="tab-lab">
-                            <div class="flex flex-col items-center justify-center text-center py-10">
-                                <div class="w-20 h-20 bg-slate-50 rounded-full flex items-center justify-center text-4xl mb-4 border border-slate-100 shadow-inner text-slate-300">
-                                    <i class="fa-solid fa-microscope"></i>
-                                </div>
-                                <h5 class="font-extrabold text-slate-800 text-sm mb-2 m-0">Belum Ada Data Lab</h5>
-                                <p class="text-xs text-slate-500 max-w-[200px] leading-relaxed m-0">Hasil pemeriksaan laboratorium atau rontgen akan muncul di sini secara otomatis jika tersedia.</p>
-                            </div>
-                        </div>
-
                     </div>
                 </div>
-            </div>
-
+            </aside>
         </div>
+        <?php endif; ?>
     </div>
 </div>
 
 <?php include __DIR__ . '/../includes/footer.php'; ?>
 
+<?php if ($histories): ?>
 <script>
-// Filter Kategori Riwayat
-function filterHistory(btn, filter) {
-    // Styling Button Tab Kiri
-    document.querySelectorAll('.filter-btn').forEach(b => {
-        b.className = "filter-btn whitespace-nowrap px-4 py-2 rounded-full text-sm font-bold bg-transparent text-slate-500 hover:text-dark smooth-transition cursor-pointer border-none";
+document.querySelectorAll('.filter-btn').forEach((button) => {
+    button.addEventListener('click', function () {
+        const filter = this.dataset.filter;
+
+        document.querySelectorAll('.filter-btn').forEach((btn) => {
+            btn.className = 'filter-btn whitespace-nowrap px-4 py-2 rounded-full text-sm font-bold bg-transparent text-slate-500 hover:text-dark smooth-transition cursor-pointer border-none';
+        });
+        this.className = 'filter-btn active whitespace-nowrap px-4 py-2 rounded-full text-sm font-bold bg-dark text-white smooth-transition cursor-pointer border-none';
+
+        document.querySelectorAll('.history-card').forEach((card) => {
+            card.style.display = filter === 'all' || card.dataset.status === filter ? 'flex' : 'none';
+        });
     });
-    btn.className = "filter-btn active whitespace-nowrap px-4 py-2 rounded-full text-sm font-bold bg-dark text-white smooth-transition cursor-pointer border-none";
-    
-    // Logika Show/Hide Card
-    document.querySelectorAll('.history-card').forEach(c => {
-        const show = filter === 'all' 
-            || (filter === 'resep' && c.getAttribute('data-resep') === '1') 
-            || c.getAttribute('data-status') === filter;
-        
-        c.style.display = show ? 'flex' : 'none';
+});
+
+function selectHistoryCard(card) {
+    document.querySelectorAll('.history-card').forEach((item) => {
+        item.classList.remove('border-primary', 'bg-primaryLight');
+        item.classList.add('border-slate-200');
     });
+    card.classList.remove('border-slate-200');
+    card.classList.add('border-primary', 'bg-primaryLight');
+
+    document.getElementById('detail-doctor').textContent = card.dataset.doctor;
+    document.getElementById('detail-specialization').textContent = card.dataset.specialization;
+    document.getElementById('detail-date').textContent = card.dataset.date;
+    document.getElementById('detail-status').textContent = card.dataset.statusLabel;
+    document.getElementById('detail-fee').textContent = new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(parseInt(card.dataset.fee, 10) || 0);
+    document.getElementById('detail-id').textContent = `#CS-${card.dataset.id}`;
+    document.getElementById('detail-license').textContent = card.dataset.license;
+    document.getElementById('detail-rating').textContent = card.dataset.rating;
+    document.getElementById('detail-patients').textContent = card.dataset.patients;
+    document.getElementById('detail-link').href = `<?= BASE_URL ?>/pages/consultation.php?consultation_id=${card.dataset.id}`;
 }
 
-// Select Card History
-function selectHistory(el, id) {
-    document.querySelectorAll('.history-card').forEach(c => {
-        c.classList.remove('border-primary', 'bg-primaryLight');
-        c.classList.add('border-slate-200');
-    });
-    el.classList.remove('border-slate-200');
-    el.classList.add('border-primary', 'bg-primaryLight');
-    
-    // (Opsional) Di tahap selanjutnya, fungsi ini bisa fetch data API backend berdasarkan ID
-}
-
-// Switch Tabs Kanan (Detail, Resep, Lab)
-function switchTab(el, tabId) {
-    // Styling Nav Tabs Kanan
-    document.querySelectorAll('.detail-tab').forEach(t => {
-        t.className = "detail-tab flex-1 py-3.5 text-center text-xs font-extrabold cursor-pointer border-b-2 border-transparent text-slate-400 hover:text-slate-700 smooth-transition bg-transparent";
-    });
-    el.className = "detail-tab active flex-1 py-3.5 text-center text-xs font-extrabold cursor-pointer border-b-2 border-primary text-primary smooth-transition bg-transparent";
-    
-    // Hide all sections, show active
-    document.querySelectorAll('.detail-section').forEach(s => {
-        s.classList.remove('block');
-        s.classList.add('hidden');
-    });
-    document.getElementById(tabId).classList.remove('hidden');
-    document.getElementById(tabId).classList.add('block');
-}
+document.querySelectorAll('.history-card').forEach((card) => {
+    card.addEventListener('click', () => selectHistoryCard(card));
+});
 </script>
+<?php endif; ?>
