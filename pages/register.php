@@ -10,10 +10,14 @@ $pageTitle = 'Daftar — CareSync';
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title><?= $pageTitle ?></title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
   <link rel="stylesheet" href="<?= BASE_URL ?>/assets/css/style.css">
   <script src="<?= BASE_URL ?>/assets/js/app.js"></script>
   <style>
-    body { background: var(--gray-50); }
+    body { background: var(--gray-50); font-family: 'Plus Jakarta Sans', sans-serif; margin: 0; }
     .auth-wrap { min-height: 100vh; display: grid; grid-template-columns: 1fr 1fr; }
     .auth-left {
       background: linear-gradient(145deg, #0ea898 0%, #1a6bff 100%);
@@ -22,6 +26,35 @@ $pageTitle = 'Daftar — CareSync';
     }
     .auth-right { display: flex; align-items: center; justify-content: center; padding: 40px; }
     .auth-card   { width: 100%; max-width: 460px; animation: fadeUp .4s ease; }
+    .auth-brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 48px;
+      text-decoration: none;
+      width: fit-content;
+    }
+    .auth-brand-icon {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 44px;
+      height: 44px;
+      background: #1D4ED8;
+      border-radius: 12px;
+      box-shadow: 0 10px 30px -12px rgba(29, 78, 216, 0.55);
+    }
+    .auth-brand-title {
+      font-size: 2rem;
+      line-height: 1;
+      font-weight: 800;
+      letter-spacing: -0.04em;
+      color: #fff;
+      margin: 0;
+    }
+    .auth-brand-title .accent {
+      color: #dbeafe;
+    }
     @keyframes fadeUp { from { opacity:0; transform:translateY(20px); } to { opacity:1; transform:translateY(0); } }
 
     /* Step indicator */
@@ -68,12 +101,18 @@ $pageTitle = 'Daftar — CareSync';
 <div class="auth-wrap">
   <div class="auth-left">
     <div style="position:relative;z-index:1">
-      <a href="<?= BASE_URL ?>" style="display:flex;align-items:center;gap:8px;margin-bottom:48px;text-decoration:none">
-        <svg width="36" height="36" viewBox="0 0 32 32" fill="none"><rect width="32" height="32" rx="10" fill="rgba(255,255,255,.2)"/><path d="M16 7C16 7 9 11 9 18c0 3.87 3.13 7 7 7s7-3.13 7-7c0-7-7-11-7-11z" fill="white"/><circle cx="16" cy="18" r="3" fill="rgba(255,255,255,.4)"/></svg>
-        <span style="font-size:22px;font-weight:800;color:#fff">CareSync</span>
+      <a href="<?= BASE_URL ?>" class="auth-brand">
+        <div class="auth-brand-icon">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M12.0002 21.35L10.5502 20.03C5.4002 15.36 2.0002 12.28 2.0002 8.5C2.0002 5.42 4.4202 3 7.5002 3C9.2402 3 10.9102 3.81 12.0002 5.09C13.0902 3.81 14.7602 3 16.5002 3C19.5802 3 22.0002 5.42 22.0002 8.5C22.0002 12.28 18.6002 15.36 13.4502 20.04L12.0002 21.35Z" fill="white"/>
+            <path d="M12 17L14 15M12 17L10 15M12 17V11M8 11V13M16 11V13" stroke="#10B981" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+            <circle cx="12" cy="17" r="6" stroke="#10B981" stroke-width="2"/>
+          </svg>
+        </div>
+        <span class="auth-brand-title">Care<span class="accent">Sync</span></span>
       </a>
 
-      <h2 style="color:#fff;font-size:2rem;margin-bottom:16px;font-family:var(--font-serif);font-style:italic">
+      <h2 style="color:#fff;font-size:2.8rem;line-height:1.1;margin-bottom:16px;font-family:'Plus Jakarta Sans', sans-serif;font-weight:800">
         Bergabung dengan<br>jutaan pengguna
       </h2>
 
@@ -259,13 +298,11 @@ async function submitRegister() {
   setLoading(btn, true, 'Mengirim OTP...');
   
   try {
-    // 1. Panggil API kirim OTP (Mengecek email & mengirim email PHPMailer)
     const response = await api('/auth/send-register-otp', { 
       method: 'POST', 
       body: JSON.stringify({ nama, email }) 
     });
     
-    // 2. Kalau sukses, baru lanjut ke form OTP (Step 3)
     setLoading(btn, false);
     document.getElementById('confirm-email').textContent = email;
     startRegCountdown(300);
@@ -273,7 +310,6 @@ async function submitRegister() {
     initRegOtpBoxes();
     showToast(response.message, 'success');
   } catch (err) {
-    // Kalau gagal (misal email sudah ada), tampilkan error dari backend
     setLoading(btn, false);
     showToast(err.message, 'error'); 
   }
@@ -298,13 +334,16 @@ function initRegOtpBoxes() {
   boxes.forEach((box, i) => {
     box.value = '';
     box.classList.remove('filled');
-    box.addEventListener('input', () => {
+    box.oninput = null;
+    box.onkeydown = null;
+    box.oninput = () => {
       box.classList.toggle('filled', !!box.value);
       if (box.value && i < boxes.length - 1) boxes[i+1].focus();
       document.getElementById('btn-verify-reg').disabled = ![...boxes].every(b => b.value);
-    });
-    box.addEventListener('keydown', e => { if (e.key==='Backspace' && !box.value && i>0) boxes[i-1].focus(); });
+    };
+    box.onkeydown = (e) => { if (e.key==='Backspace' && !box.value && i>0) boxes[i-1].focus(); };
   });
+  document.getElementById('btn-verify-reg').disabled = true;
   boxes[0].focus();
 }
 
@@ -313,7 +352,6 @@ async function verifyRegOtp() {
   const btn  = document.getElementById('btn-verify-reg');
   setLoading(btn, true, 'Memverifikasi...');
 
-  // Gabungkan semua data diri + password + OTP untuk dikirim ke backend
   const payload = {
     nama: document.getElementById('reg-name').value,
     email: document.getElementById('reg-email').value,
@@ -325,18 +363,15 @@ async function verifyRegOtp() {
   };
   
   try {
-    // 3. Panggil API Registrasi (Memvalidasi OTP dan memasukkan ke DB)
     const response = await api('/auth/register', {
       method: 'POST',
       body: JSON.stringify(payload)
     });
     
-    // 4. Simpan session token asli & redirect ke dashboard
     saveSession(response.data.token, response.data.user);
     showToast('Pendaftaran berhasil!', 'success');
     setTimeout(() => window.location.href = BASE_URL + '/pages/dashboard.php', 900);
   } catch (err) {
-    // Kalau OTP salah
     setLoading(btn, false);
     showToast(err.message, 'error');
   }

@@ -1,68 +1,78 @@
 <?php
-// Path: api/auth/verify-login-otp.php
-header("Access-Control-Allow-Origin: *");
-header("Content-Type: application/json; charset=UTF-8");
 require_once '../../includes/config.php';
 
-$data = json_decode(file_get_contents("php://input"), true);
-$email = trim($data['email'] ?? '');
+$data = jsonInput();
+$email = normalizeEmail($data['email'] ?? '');
 $otp = trim($data['otp'] ?? '');
 
-if (empty($email) || empty($otp)) {
-    echo json_encode(["status" => "error", "message" => "Email dan OTP wajib diisi!"]);
-    exit;
+if ($email === '' || $otp === '') {
+    jsonResponse(['status' => 'error', 'message' => 'Email dan OTP wajib diisi!'], 422);
+}
+
+if (!isValidEmail($email) || !isValidOtp($otp)) {
+    jsonResponse(['status' => 'error', 'message' => 'Email atau OTP tidak valid.'], 422);
 }
 
 try {
-    // Ambil data user beserta OTP yang disimpan
-    $stmt = $pdo->prepare("SELECT id, nama, email, role, otp_code, otp_expiry FROM users WHERE email = :email");
+    $stmt = $pdo->prepare('SELECT id, nama, email, role, otp_code, otp_expiry FROM users WHERE email = :email');
     $stmt->execute([':email' => $email]);
-    $user = $stmt->fetch(PDO::FETCH_ASSOC);
+    $user = $stmt->fetch();
 
-    if ($user) {
-        $currentTime = date('Y-m-d H:i:s');
-
-        // Validasi 1: Apakah OTP kosong? (Artinya user belum minta OTP)
-        if (empty($user['otp_code'])) {
-            echo json_encode(["status" => "error", "message" => "Kode OTP tidak ditemukan, silakan minta kode baru."]);
-            exit;
-        }
-
-        // Validasi 2: Apakah OTP sudah lewat 5 menit?
-        if ($currentTime > $user['otp_expiry']) {
-            echo json_encode(["status" => "error", "message" => "Kode OTP sudah kadaluarsa! Silakan kirim ulang."]);
-            exit;
-        }
-
-        // Validasi 3: Apakah kodenya cocok?
-        if ($otp === $user['otp_code']) {
-            // Jika berhasil, HAPUS kode OTP dari database agar tidak bisa disalahgunakan lagi
-            $clearStmt = $pdo->prepare("UPDATE users SET otp_code = NULL, otp_expiry = NULL WHERE id = :id");
-            $clearStmt->execute([':id' => $user['id']]);
-
-            // Buat token dummy untuk session
-            $token = bin2hex(random_bytes(16));
-            
-            echo json_encode([
-                "status" => "success",
-                "message" => "Login berhasil",
-                "data" => [
-                    "token" => $token,
-                    "user" => [
-                        "id" => $user['id'],
-                        "name" => $user['nama'],
-                        "email" => $user['email'],
-                        "role" => $user['role'] ?? 'user'
-                    ]
-                ]
-            ]);
-        } else {
-            echo json_encode(["status" => "error", "message" => "Kode OTP salah! Coba lagi."]);
-        }
-    } else {
-        echo json_encode(["status" => "error", "message" => "Email tidak valid!"]);
+    if (!$user) {
+        writeAuditLog($pdo, 'auth.login.otp', 'failed', null, 'users', $email, [
+            'email' => $email,
+            'reason' => 'email_not_found',
+        ]);
+        jsonResponse(['status' => 'error', 'message' => 'Email tidak valid!'], 404);
     }
-} catch (PDOException $e) {
-    echo json_encode(["status" => "error", "message" => "Database error: " . $e->getMessage()]);
+
+    $currentTime = date('Y-m-d H:i:s');
+    if (empty($user['otp_code'])) {
+        jsonResponse(['status' => 'error', 'message' => 'Kode OTP tidak ditemukan, silakan minta kode baru.'], 422);
+    }
+
+    if ($currentTime > $user['otp_expiry']) {
+        writeAuditLog($pdo, 'auth.login.otp', 'failed', (int) $user['id'], 'users', (string) $user['id'], [
+            'email' => $email,
+            'reason' => 'otp_expired',
+        ]);
+        jsonResponse(['status' => 'error', 'message' => 'Kode OTP sudah kadaluarsa! Silakan kirim ulang.'], 422);
+    }
+
+    if (!hash_equals((string) $user['otp_code'], $otp)) {
+        writeAuditLog($pdo, 'auth.login.otp', 'failed', (int) $user['id'], 'users', (string) $user['id'], [
+            'email' => $email,
+            'reason' => 'otp_mismatch',
+        ]);
+        jsonResponse(['status' => 'error', 'message' => 'Kode OTP salah! Coba lagi.'], 401);
+    }
+
+    $clearStmt = $pdo->prepare('UPDATE users SET otp_code = NULL, otp_expiry = NULL WHERE id = :id');
+    $clearStmt->execute([':id' => $user['id']]);
+
+    $authUser = [
+        'id' => (int) $user['id'],
+        'name' => $user['nama'],
+        'email' => $user['email'],
+        'role' => $user['role'] ?? 'user',
+    ];
+    $token = issueAuthToken($authUser);
+    writeAuditLog($pdo, 'auth.login.otp', 'success', (int) $user['id'], 'users', (string) $user['id'], [
+        'email' => $email,
+    ]);
+
+    jsonResponse([
+        'status' => 'success',
+        'message' => 'Login berhasil',
+        'data' => [
+            'token' => $token,
+            'user' => $authUser,
+        ],
+    ]);
+} catch (Throwable $e) {
+    writeAuditLog($pdo, 'auth.login.otp', 'failed', null, 'users', $email, [
+        'email' => $email,
+        'reason' => 'server_error',
+    ]);
+    handleServerException($e, 'Verifikasi OTP gagal diproses.');
 }
-?>

@@ -149,10 +149,14 @@ $pageTitle = 'Masuk — CareSync';
     <div class="auth-blob" style="width:300px;height:300px;bottom:-50px;left:-80px;background:rgba(16,185,129,0.1)"></div>
     <div class="auth-left-content">
       <a href="<?= BASE_URL ?>" class="flex items-center gap-3 mb-12 no-underline group w-fit">
-        <div class="w-10 h-10 bg-white/20 backdrop-blur-sm rounded-xl flex items-center justify-center text-white text-xl shadow-md group-hover:rotate-12 group-hover:scale-110 transition-all duration-300">
-            <i class="fa-solid fa-notes-medical"></i>
+        <div class="w-11 h-11 bg-primary rounded-xl flex items-center justify-center shadow-soft group-hover:scale-105 group-hover:rotate-3 transition-all duration-300">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <path d="M12.0002 21.35L10.5502 20.03C5.4002 15.36 2.0002 12.28 2.0002 8.5C2.0002 5.42 4.4202 3 7.5002 3C9.2402 3 10.9102 3.81 12.0002 5.09C13.0902 3.81 14.7602 3 16.5002 3C19.5802 3 22.0002 5.42 22.0002 8.5C22.0002 12.28 18.6002 15.36 13.4502 20.04L12.0002 21.35Z" fill="white"/>
+              <path d="M12 17L14 15M12 17L10 15M12 17V11M8 11V13M16 11V13" stroke="#10B981" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+              <circle cx="12" cy="17" r="6" stroke="#10B981" stroke-width="2"/>
+            </svg>
         </div>
-        <span class="font-extrabold text-2xl tracking-tight text-white">CareSync</span>
+        <span class="font-extrabold text-2xl tracking-tighter text-white">Care<span class="text-blue-100">Sync</span></span>
       </a>
 
       <h2 class="text-white text-3xl md:text-4xl font-extrabold mb-4 leading-tight">
@@ -285,6 +289,17 @@ $pageTitle = 'Masuk — CareSync';
 <div id="toast-container" class="toast-container"></div>
 
 <script>
+const BASE_URL = '<?= BASE_URL ?>';
+let otpCountdownInterval = null;
+
+function getDashboardPathByRole(role) {
+  const normalizedRole = String(role || '').toLowerCase();
+  if (normalizedRole === 'admin') return `${BASE_URL}/pages/admin/dashboard.php`;
+  if (normalizedRole === 'apoteker' || normalizedRole === 'pharmacist') return `${BASE_URL}/pages/apoteker/dashboard.php`;
+  if (normalizedRole === 'dokter' || normalizedRole === 'doctor') return `${BASE_URL}/pages/dokter/dashboard.php`;
+  return `${BASE_URL}/pages/dashboard.php`;
+}
+
 function togglePassword(inputId, btn) {
   const inp = document.getElementById(inputId);
   const isPass = inp.type === 'password';
@@ -315,12 +330,10 @@ async function handleLogin(e) {
       })
     });
     
-    // Jika sukses, simpan session
     saveSession(data.data.token, data.data.user);
     showToast('Berhasil masuk!', 'success');
-    setTimeout(() => window.location.href = '/caresync/pages/dashboard.php', 800);
+    setTimeout(() => window.location.href = getDashboardPathByRole(data.data.user?.role), 800);
   } catch (err) {
-    // Tampilkan error dari backend (misal: "Email atau password salah!")
     showToast(err.message, 'error');
   } finally {
     setLoading(btn, false);
@@ -335,20 +348,16 @@ async function sendLoginOtp() {
   setLoading(btn, true, 'Mengirim...');
   
   try {
-    // Panggil API untuk cek email
     const response = await api('/auth/send-otp', { method: 'POST', body: JSON.stringify({ email }) });
     
-    // Kalau email ADA, sembunyikan step 1, tampilkan step 2
     document.getElementById('otp-step-1').classList.add('hidden');
     document.getElementById('otp-step-2').classList.remove('hidden');
     document.getElementById('otp-target-email').textContent = email;
     startCountdown(300);
     initOtpBoxes();
     
-    // Tampilkan notifikasi bocoran OTP
     showToast(response.message, 'success');
   } catch (err) {
-    // Kalau email TIDAK ADA, tampilkan error dan JANGAN pindah step
     showToast(err.message, 'error');
   } finally {
     setLoading(btn, false);
@@ -357,28 +366,43 @@ async function sendLoginOtp() {
 
 function startCountdown(secs) {
   const el = document.getElementById('otp-countdown');
-  const interval = setInterval(() => {
+  if (otpCountdownInterval) {
+    clearInterval(otpCountdownInterval);
+  }
+
+  el.textContent = '05:00';
+  otpCountdownInterval = setInterval(() => {
     secs--;
     const m = String(Math.floor(secs/60)).padStart(2,'0');
     const s = String(secs%60).padStart(2,'0');
     el.textContent = m+':'+s;
-    if (secs <= 0) { clearInterval(interval); el.textContent = 'Kedaluwarsa'; }
+    if (secs <= 0) {
+      clearInterval(otpCountdownInterval);
+      otpCountdownInterval = null;
+      el.textContent = 'Kedaluwarsa';
+    }
   }, 1000);
 }
 
 function initOtpBoxes() {
-  const boxes = document.querySelectorAll('.otp-input');
+  const boxes = document.querySelectorAll('#otp-boxes .otp-input');
   boxes.forEach((box, i) => {
-    box.addEventListener('input', () => {
+    box.value = '';
+    box.classList.remove('filled');
+    box.oninput = null;
+    box.onkeydown = null;
+
+    box.oninput = () => {
       box.classList.toggle('filled', box.value !== '');
       if (box.value && i < boxes.length - 1) boxes[i+1].focus();
       const allFilled = [...boxes].every(b => b.value);
       document.getElementById('btn-verify-otp').disabled = !allFilled;
-    });
-    box.addEventListener('keydown', e => {
+    };
+    box.onkeydown = (e) => {
       if (e.key === 'Backspace' && !box.value && i > 0) boxes[i-1].focus();
-    });
+    };
   });
+  document.getElementById('btn-verify-otp').disabled = true;
   boxes[0].focus();
 }
 
@@ -394,9 +418,8 @@ async function verifyLoginOtp() {
     saveSession(data.data.token, data.data.user);
     
     showToast('Berhasil masuk!', 'success');
-    setTimeout(() => window.location.href = '/caresync/pages/dashboard.php', 800);
+    setTimeout(() => window.location.href = getDashboardPathByRole(data.data.user?.role), 800);
   } catch (err) {
-    // Matikan mock bypass, tampilkan error aslinya!
     showToast(err.message, 'error');
   } finally {
     setLoading(btn, false);
